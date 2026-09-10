@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+
+data/*.hdf5
+inputs/dto/*.hdf5
+
+figures/*
+!figures/*.pdf
