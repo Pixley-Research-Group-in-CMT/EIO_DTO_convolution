@@ -2,15 +2,15 @@
 import argparse
 import hashlib
 import json
-import time
 
 import h5py
 import numpy as np
 
 from config import (DATA_DIR, E_FERMI, EIO_REFERENCE, ENERGY_WINDOW, MODEL_DIR,
                     N_LAYER, N_WANN, SURFACE_WEIGHT_CUTOFF)
-from eio_tb import (build_slab, coord_transf, gen_slab_ham, get_BZ_sampling,
-                    remove_hops, setup_bulklattice)
+from eio_tb import (build_slab, hexagonal_momentum_grid, load_bulk_model,
+                    slab_hamiltonian, transform_to_slab_coordinates,
+                    truncate_hoppings)
 
 
 def phase_aligned_spinor_error(generated, reference):
@@ -31,18 +31,19 @@ def generate_surface_states(nk, overwrite=False):
     if output.exists() and not overwrite:
         raise FileExistsError(f"{output} exists; pass --overwrite to replace it")
 
-    bulk = setup_bulklattice(
+    bulk = load_bulk_model(
         MODEL_DIR / "cellindices.txt",
         MODEL_DIR / "ham0.txt",
         MODEL_DIR / "wannier90_centres.xyz",
     )
-    cutoff = 2 * np.linalg.norm(bulk["latvecs0"][0])
-    slab = build_slab(remove_hops(bulk, cutoff))
-    geometry = coord_transf(bulk, slab)
-    k_grid = get_BZ_sampling(geometry, nk=nk, hex=True)["k_mesh_flat"]
+    cutoff = 2 * np.linalg.norm(bulk["lattice_vectors"][0])
+    truncated_bulk = truncate_hoppings(bulk, cutoff)
+    slab = build_slab(truncated_bulk)
+    geometry = transform_to_slab_coordinates(bulk, slab)
+    k_grid = hexagonal_momentum_grid(geometry["reciprocal_vectors"], nk)
     assert k_grid.shape == (nk * nk, 3)
 
-    positions = geometry["wann_pos0_new"]
+    positions = geometry["wannier_centres"]
     top = positions[:, 2] > 4
     masks = [
         top & (positions[:, 0] < -0.5),
@@ -71,14 +72,16 @@ def generate_surface_states(nk, overwrite=False):
     }
 
     def diagonalize(k):
-        hamiltonian, _, _ = gen_slab_ham(
-            k, slab["ham_slab"], geometry["R_slab_new"],
-            nwann=N_WANN, nlayer=N_LAYER,
+        hamiltonian = slab_hamiltonian(
+            k,
+            slab["hoppings"],
+            geometry["slab_vectors"],
+            n_orbitals=N_WANN,
+            n_layers=N_LAYER,
         )
         energies, states = np.linalg.eigh(hamiltonian)
         return hamiltonian, energies, states
 
-    start = time.monotonic()
     for ik, k in enumerate(k_grid):
         hamiltonian, energies, states = diagonalize(k)
         projections = [states[index, :] for index in indices]
@@ -149,7 +152,6 @@ def generate_surface_states(nk, overwrite=False):
         )
 
     validation["selected_states"] = len(arrays["eigf"])
-    validation["elapsed_seconds"] = time.monotonic() - start
     validation["model_sha256"] = {
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in sorted(MODEL_DIR.iterdir()) if path.is_file()

@@ -27,9 +27,9 @@ def compute_field(field):
         energies = np.squeeze(eio_h5["eigf"][...])
         velocities = eio_h5["v_kf"][...]
         surface_weight = np.sum(
-            abs(eio_h5["proj_sl1"][...]) ** 2
-            + abs(eio_h5["proj_sl2"][...]) ** 2
-            + abs(eio_h5["proj_sl3"][...]) ** 2,
+            np.abs(eio_h5["proj_sl1"][...]) ** 2
+            + np.abs(eio_h5["proj_sl2"][...]) ** 2
+            + np.abs(eio_h5["proj_sl3"][...]) ** 2,
             axis=(1, 2),
         )
         t2 = {
@@ -47,56 +47,60 @@ def compute_field(field):
     transport_rows = []
     relaxation_rows = []
     for mode, matrix_elements in t2.items():
-        mode_rows = []
-        for angle in range(len(matrix_elements)):
-            inverse_tau = np.sum(
-                matrix_elements[angle] * pair_delta * (1 - cos_theta), axis=1
+        inverse_tau = np.asarray([
+            np.sum(matrix_element * pair_delta * (1 - cos_theta), axis=1)
+            for matrix_element in matrix_elements
+        ])
+        if np.any(inverse_tau <= 0):
+            angle, ik = np.argwhere(inverse_tau <= 0)[0]
+            raise ValueError(
+                f"Non-positive scattering rate at field {tag}, angle {angle}, ik {ik}"
             )
-            if np.any(inverse_tau <= 0):
-                raise ValueError(
-                    f"Non-positive scattering rate at field {tag}, angle {angle}"
-                )
-            sigma_terms = (
-                fermi_delta * abs(velocities[:, 0]) ** 2 * surface_weight
-                / inverse_tau
-            )
-            sigma = np.sum(sigma_terms)
-            rho = 1 / sigma
-            mode_rows.append({
-                "field": field,
-                "angle": angle,
-                "mode": mode,
-                "sigma": sigma,
-                "rho": rho,
-            })
-            relaxation_rows.append(pd.DataFrame({
-                "field": field,
-                "angle": angle,
-                "mode": mode,
-                "ik": np.arange(len(kf)),
-                "kx": kf[:, 0],
-                "ky": kf[:, 1],
-                "energy": energies,
-                "vx_archived": velocities[:, 0],
-                "surface_weight": surface_weight,
-                "inverse_tau": inverse_tau,
-                "tau": 1 / inverse_tau,
-                "sigma_term": sigma_terms,
-            }))
 
-        mode_frame = pd.DataFrame(mode_rows)
+        sigma_terms = (
+            fermi_delta[None, :]
+            * np.abs(velocities[:, 0])[None, :] ** 2
+            * surface_weight[None, :]
+            / inverse_tau
+        )
+        sigma = np.asarray([np.sum(terms) for terms in sigma_terms])
+        mode_frame = pd.DataFrame({
+            "field": field,
+            "angle": np.arange(len(matrix_elements)),
+            "mode": mode,
+            "sigma": sigma,
+            "rho": 1 / sigma,
+        })
         rho0 = mode_frame.loc[mode_frame["angle"] == 0, "rho"].iloc[0]
         mode_frame["delta_rho_over_rho0"] = mode_frame["rho"] / rho0 - 1
         mode_frame.to_csv(DATA_DIR / f"rho_h{tag}_{mode}.csv", index=False)
         transport_rows.append(mode_frame)
 
+        n_angles, nkf = inverse_tau.shape
+        relaxation_rows.append(pd.DataFrame({
+            "field": field,
+            "angle": np.repeat(np.arange(n_angles), nkf),
+            "mode": mode,
+            "ik": np.tile(np.arange(nkf), n_angles),
+            "kx": np.tile(kf[:, 0], n_angles),
+            "ky": np.tile(kf[:, 1], n_angles),
+            "energy": np.tile(energies, n_angles),
+            "vx_archived": np.tile(velocities[:, 0], n_angles),
+            "surface_weight": np.tile(surface_weight, n_angles),
+            "inverse_tau": inverse_tau.ravel(),
+            "tau": 1 / inverse_tau.ravel(),
+            "sigma_term": sigma_terms.ravel(),
+        }))
+
         if mode == "raw":
             reference_path = TRANSPORT_REFERENCE_DIR / f"rho_h{tag}_raw.csv"
             if reference_path.exists():
                 reference = pd.read_csv(reference_path)
-                max_error = np.max(abs(mode_frame["rho"] - reference["rho"]))
+                max_error = np.max(np.abs(mode_frame["rho"] - reference["rho"]))
                 relative_error = np.max(
-                    abs((mode_frame["rho"] - reference["rho"]) / reference["rho"])
+                    np.abs(
+                        (mode_frame["rho"] - reference["rho"]) / reference["rho"]
+                    )
                 )
                 print(
                     f"field {tag}: maximum archived rho error = {max_error:.3e} "

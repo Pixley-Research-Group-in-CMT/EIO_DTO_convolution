@@ -11,17 +11,21 @@ from config import (ANGLE_SMOOTHING_SIGMA, DATA_DIR, EIO_NK, FIELDS,
                     field_tag)
 
 
-def interface_bond_vectors():
-    lattice_constant = 7.26198663999854
-    distance = lattice_constant / (2 * np.sqrt(3))
-    cos30 = np.cos(np.pi / 6)
-    sin30 = np.sin(np.pi / 6)
-    return {
-        0: ([0, distance, 0], [-distance * cos30, -distance * sin30, 0]),
-        1: ([distance * cos30, -distance * sin30, 0], [0, distance, 0]),
-        2: ([-distance * cos30, -distance * sin30, 0],
-            [distance * cos30, -distance * sin30, 0]),
-    }
+PAULI = np.array([
+    [[0, 1], [1, 0]],
+    [[0, -1j], [1j, 0]],
+    [[1, 0], [0, -1]],
+])
+EIO_NEIGHBORS = {0: (1, 2), 1: (1, 3), 2: (2, 3)}
+
+BOND_DISTANCE = 7.26198663999854 / (2 * np.sqrt(3))
+COS_30 = np.cos(np.pi / 6)
+SIN_30 = np.sin(np.pi / 6)
+BOND_VECTORS = BOND_DISTANCE * np.array([
+    [[0, 1, 0], [-COS_30, -SIN_30, 0]],
+    [[COS_30, -SIN_30, 0], [0, 1, 0]],
+    [[-COS_30, -SIN_30, 0], [COS_30, -SIN_30, 0]],
+])
 
 
 def compute_field(field, overwrite=False):
@@ -33,13 +37,6 @@ def compute_field(field, overwrite=False):
     if (output_h5.exists() or output_csv.exists()) and not overwrite:
         raise FileExistsError(f"Outputs for field {tag} exist; pass --overwrite")
 
-    pauli = np.array([
-        [[0, 1], [1, 0]],
-        [[0, -1j], [1j, 0]],
-        [[1, 0], [0, -1]],
-    ])
-    neighbors = {0: (1, 2), 1: (1, 3), 2: (2, 3)}
-    bond_vectors = interface_bond_vectors()
     orbital_hoppings = np.asarray(ORBITAL_HOPPINGS) ** 2
 
     with h5py.File(eio_path) as eio_h5, h5py.File(spin_path) as spin_h5:
@@ -64,15 +61,15 @@ def compute_field(field, overwrite=False):
                 for dto_sublattice in range(3):
                     spin = spin_fourier[angle, dto_sublattice, ik]
                     spin_sigma = np.einsum(
-                        "ksnm,mab->ksnab", spin, pauli, optimize=True
+                        "ksnm,mab->ksnab", spin, PAULI, optimize=True
                     )
                     for bond, eio_sublattice in enumerate(
-                        neighbors[dto_sublattice]
+                        EIO_NEIGHBORS[dto_sublattice]
                     ):
                         projection = projections[eio_sublattice]
                         phase = np.exp(1j * np.einsum(
                             "km,m->k", q_vectors[ik],
-                            bond_vectors[dto_sublattice][bond],
+                            BOND_VECTORS[dto_sublattice][bond],
                         ))
                         amplitude += np.einsum(
                             "o,k,oa,kob,ksnab->ksnab",
@@ -83,11 +80,12 @@ def compute_field(field, overwrite=False):
                             spin_sigma,
                             optimize=True,
                         )
-                amplitude_squared = np.sum(abs(amplitude) ** 2, axis=(-1, -2))
+                amplitude_squared = np.sum(np.abs(amplitude) ** 2, axis=(-1, -2))
                 t2_raw[angle, ik] = np.mean(
                     amplitude_squared, axis=(1, 2)
                 ) / T2_NORMALIZATION
-            print(f"field {tag}: angle {angle + 1}/{n_angles}", flush=True)
+            if angle == 0 or (angle + 1) % 10 == 0:
+                print(f"field {tag}: angle {angle + 1}/{n_angles}", flush=True)
 
     t2_smoothed = gaussian_filter1d(
         t2_raw, sigma=ANGLE_SMOOTHING_SIGMA, axis=0
@@ -106,20 +104,18 @@ def compute_field(field, overwrite=False):
             smoothing_mode="scipy.ndimage.gaussian_filter1d default reflect mode",
         )
 
-    rows = []
-    for angle in range(n_angles):
-        rows.append(pd.DataFrame({
-            "field": field,
-            "angle": angle,
-            "ik": np.repeat(np.arange(nkf), nkf),
-            "ikprime": np.tile(np.arange(nkf), nkf),
-            "qx": q_vectors[..., 0].ravel(),
-            "qy": q_vectors[..., 1].ravel(),
-            "qz": q_vectors[..., 2].ravel(),
-            "t2_raw": t2_raw[angle].ravel(),
-            "t2_smoothed": t2_smoothed[angle].ravel(),
-        }))
-    pd.concat(rows, ignore_index=True).to_csv(output_csv, index=False)
+    pairs_per_angle = nkf * nkf
+    pd.DataFrame({
+        "field": field,
+        "angle": np.repeat(np.arange(n_angles), pairs_per_angle),
+        "ik": np.tile(np.repeat(np.arange(nkf), nkf), n_angles),
+        "ikprime": np.tile(np.arange(nkf), n_angles * nkf),
+        "qx": np.tile(q_vectors[..., 0].ravel(), n_angles),
+        "qy": np.tile(q_vectors[..., 1].ravel(), n_angles),
+        "qz": np.tile(q_vectors[..., 2].ravel(), n_angles),
+        "t2_raw": t2_raw.ravel(),
+        "t2_smoothed": t2_smoothed.ravel(),
+    }).to_csv(output_csv, index=False)
     print(f"Wrote {output_h5}")
     print(f"Wrote {output_csv}")
 

@@ -70,7 +70,7 @@ def compute_field(field, snapshots_path, overwrite=False):
     n_used_snapshots = N_SNAPSHOTS - warmup_snapshots
 
     mode = "w" if overwrite else "x"
-    rows = []
+    structure_factors = np.empty((N_ANGLES, 3, nkf, nkf), dtype=float)
     with h5py.File(snapshots_path) as snapshots_h5, h5py.File(output_h5, mode) as output:
         coordinates, sublattices, lattice = prepare_interface_coordinates(snapshots_h5)
         phases = [
@@ -91,9 +91,6 @@ def compute_field(field, snapshots_path, overwrite=False):
             compression="gzip",
             compression_opts=4,
             shuffle=True,
-        )
-        structure_h5 = output.create_dataset(
-            "structure_factor", shape=(N_ANGLES, 3, nkf, nkf), dtype=float
         )
         output.attrs.update(
             field=field,
@@ -126,25 +123,28 @@ def compute_field(field, snapshots_path, overwrite=False):
                     optimize=True,
                 ) / np.sqrt(len(indices))
                 structure_factor = np.mean(
-                    np.sum(abs(fourier) ** 2, axis=-1), axis=(2, 3)
+                    np.sum(np.abs(fourier) ** 2, axis=-1), axis=(2, 3)
                 )
                 fourier_h5[angle, sublattice] = fourier
-                structure_h5[angle, sublattice] = structure_factor
+                structure_factors[angle, sublattice] = structure_factor
+            if angle == 0 or (angle + 1) % 10 == 0:
+                print(f"field {tag}: angle {angle + 1}/{N_ANGLES}", flush=True)
+        output.create_dataset("structure_factor", data=structure_factors)
 
-                rows.append(pd.DataFrame({
-                    "field": field,
-                    "angle": angle,
-                    "sublattice": sublattice,
-                    "ik": np.repeat(np.arange(nkf), nkf),
-                    "ikprime": np.tile(np.arange(nkf), nkf),
-                    "qx": q_vectors[..., 0].ravel(),
-                    "qy": q_vectors[..., 1].ravel(),
-                    "qz": q_vectors[..., 2].ravel(),
-                    "structure_factor": structure_factor.ravel(),
-                }))
-            print(f"field {tag}: angle {angle + 1}/{N_ANGLES}", flush=True)
-
-    pd.concat(rows, ignore_index=True).to_csv(output_csv, index=False)
+    pairs_per_sublattice = nkf * nkf
+    pd.DataFrame({
+        "field": field,
+        "angle": np.repeat(np.arange(N_ANGLES), 3 * pairs_per_sublattice),
+        "sublattice": np.tile(
+            np.repeat(np.arange(3), pairs_per_sublattice), N_ANGLES
+        ),
+        "ik": np.tile(np.repeat(np.arange(nkf), nkf), N_ANGLES * 3),
+        "ikprime": np.tile(np.arange(nkf), N_ANGLES * 3 * nkf),
+        "qx": np.tile(q_vectors[..., 0].ravel(), N_ANGLES * 3),
+        "qy": np.tile(q_vectors[..., 1].ravel(), N_ANGLES * 3),
+        "qz": np.tile(q_vectors[..., 2].ravel(), N_ANGLES * 3),
+        "structure_factor": structure_factors.ravel(),
+    }).to_csv(output_csv, index=False)
     print(f"Wrote {output_h5}")
     print(f"Wrote {output_csv}")
 

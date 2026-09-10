@@ -5,7 +5,6 @@
   "max_eigenpair_residual": 5.332967209752175e-15,
   "max_orthonormality_error": 3.3306690738754696e-15,
   "selected_states": 15,
-  "elapsed_seconds": 16.741851333004888,
   "model_sha256": {
     "cellindices.txt": "83f6dca2aea947a84e9779004a45241eeba6c81c99bb2f88b7e4c839e2c591cc",
     "ham0.txt": "2ce96654d1f9ff39156b986943dc3c2567312c72d4d11163e0feb7c5798bd43e",

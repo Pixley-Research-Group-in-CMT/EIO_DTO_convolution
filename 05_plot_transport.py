@@ -35,22 +35,26 @@ for field, color in zip(FIELDS, colors):
         marker="o", ms=2.2, lw=1.0, color=color,
     )
 
-axes[0].set_xlabel(r"Field angle $\phi$ (degree)")
+axes[0].set_xlabel(r"Field angle $\phi$ (degrees)")
 axes[0].set_ylabel(r"Interface resistivity $\rho_{\mathrm{int}}$ (a.u.)")
 axes[0].legend(frameon=False, fontsize=7, handlelength=1.5)
 axes[0].text(0.02, 0.96, "a", transform=axes[0].transAxes, va="top", fontweight="bold")
 
-axes[1].set_xlabel(r"Field angle $\phi$ (degree)")
+axes[1].set_xlabel(r"Field angle $\phi$ (degrees)")
 axes[1].set_ylabel(r"$[\rho(\phi)-\rho(0)]/\rho(0)$")
 axes[1].text(0.02, 0.96, "b", transform=axes[1].transAxes, va="top", fontweight="bold")
 
 for axis in axes:
-    axis.set_xlim(0, 59)
+    axis.set_xlim(0, 60)
     axis.set_xticks([0, 15, 30, 45, 60])
     axis.tick_params(width=0.8, length=3)
 
 FIGURE_DIR.mkdir(exist_ok=True)
 output = FIGURE_DIR / "interface_resistivity.pdf"
-figure.savefig(output, bbox_inches="tight")
+figure.savefig(
+    output,
+    bbox_inches="tight",
+    metadata={"CreationDate": None, "ModDate": None},
+)
 plt.close(figure)
 print(f"Wrote {output}")
