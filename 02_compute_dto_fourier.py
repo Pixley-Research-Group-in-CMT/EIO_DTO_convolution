@@ -5,13 +5,20 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from config import (DATA_DIR, DTO_SNAPSHOTS, EIO_DTO_LATTICE_RATIO, EIO_NK,
-                    FIELDS, N_ANGLES, N_SEEDS, N_SNAPSHOTS, SITES_PER_SUBLATTICE,
+from config import (DATA_DIR, DTO_OUT_OF_PLANE_SNAPSHOTS, DTO_SNAPSHOTS,
+                    EIO_DTO_LATTICE_RATIO, EIO_NK, FIELDS, N_ANGLES, N_SEEDS,
+                    N_SNAPSHOTS, OUT_OF_PLANE_FIELDS,
+                    OUT_OF_PLANE_N_SNAPSHOTS,
+                    OUT_OF_PLANE_SITES_PER_SUBLATTICE,
+                    OUT_OF_PLANE_SYSTEM_SIZE, OUT_OF_PLANE_TEMPERATURES,
+                    OUT_OF_PLANE_WARMUP_SNAPSHOTS, SITES_PER_SUBLATTICE,
                     SYSTEM_SIZE, TEMPERATURE, WARMUP_SNAPSHOTS_BY_FIELD,
-                    field_tag)
+                    condition_tag, field_tag)
 
 
-def prepare_interface_coordinates(snapshot_h5):
+def prepare_interface_coordinates(
+    snapshot_h5, system_size, sites_per_sublattice
+):
     """Align DTO with EIO and identify the three interfacial kagome sublattices.
 
     Returns the transformed coordinates, global site indices for each DTO
@@ -34,7 +41,7 @@ def prepare_interface_coordinates(snapshot_h5):
         [length, 0, 0],
         [length / 2, np.sqrt(3) * length / 2, 0],
         [0, 0, length],
-    ]) / SYSTEM_SIZE
+    ]) / system_size
 
     # The first kagome layer contains three translated triangular sublattices.
     # Classify sites by testing integer coordinates in the Bravais basis.
@@ -56,21 +63,78 @@ def prepare_interface_coordinates(snapshot_h5):
                     selected.append(local_index)
         sublattices.append(kagome[np.asarray(selected)])
 
-    if not all(len(indices) == SITES_PER_SUBLATTICE for indices in sublattices):
-        raise ValueError("Failed to identify three 64-site kagome sublattices")
-    if len(np.unique(np.concatenate(sublattices))) != 3 * SITES_PER_SUBLATTICE:
+    if not all(len(indices) == sites_per_sublattice for indices in sublattices):
+        counts = [len(indices) for indices in sublattices]
+        raise ValueError(
+            f"Expected three {sites_per_sublattice}-site sublattices; found {counts}"
+        )
+    if len(np.unique(np.concatenate(sublattices))) != 3 * sites_per_sublattice:
         raise ValueError("The identified kagome sublattices overlap")
     return coordinates, np.asarray(sublattices), lattice
 
 
-def compute_field(field, snapshots_path, overwrite=False):
-    """Compute sample-resolved DTO spin amplitudes for one field magnitude."""
+def read_configurations(
+    snapshot_h5, scan, field, temperature, angle, site_indices,
+    warmup_snapshots, n_snapshots,
+):
+    """Read one condition into (seed, snapshot, site, spin component)."""
+    configurations = np.empty(
+        (N_SEEDS, n_snapshots - warmup_snapshots, len(site_indices), 3),
+        dtype=float,
+    )
     tag = field_tag(field)
+    for seed in range(N_SEEDS):
+        for snapshot_index, timestep in enumerate(
+            range(warmup_snapshots, n_snapshots)
+        ):
+            if scan == "in-plane":
+                path = (
+                    f"H{tag}/phi{angle}/kT{temperature}/seed{seed}/"
+                    f"tstep{timestep}/configs"
+                )
+            else:
+                path = (
+                    f"H{tag}/kT{temperature}/seed{seed}/"
+                    f"tstep{timestep}/configs"
+                )
+            configurations[seed, snapshot_index] = snapshot_h5[path][site_indices]
+    return configurations
+
+
+def local_moment_summary(configurations, field, temperature):
+    """Reproduce the archived mean magnitude of each site's thermal moment."""
+    thermal_spin = np.mean(configurations, axis=(0, 1))
+    seed_spin = np.mean(configurations, axis=1)
+    spin_error = np.std(seed_spin, axis=0) / np.sqrt(len(seed_spin))
+
+    moment_squared = np.sum(thermal_spin ** 2, axis=1)
+    moment = np.mean(np.sqrt(moment_squared))
+    moment_squared_error = np.sqrt(
+        np.sum(4 * spin_error ** 2 * thermal_spin ** 2, axis=1)
+    )
+    moment_error = np.mean(moment_squared_error) / (2 * moment)
+    return {
+        "field": field,
+        "temperature": temperature,
+        "mean_local_moment_squared": np.mean(moment_squared),
+        "mean_local_moment_squared_error": np.mean(moment_squared_error),
+        "mean_local_moment": moment,
+        "mean_local_moment_error": moment_error,
+    }
+
+
+def compute_condition(
+    scan, field, temperature, snapshots_path, system_size,
+    sites_per_sublattice, n_angles, n_snapshots, warmup_snapshots,
+    overwrite=False,
+):
+    """Compute sample-resolved DTO spin amplitudes for one scan condition."""
+    tag = condition_tag(scan, field, temperature)
     eio_path = DATA_DIR / f"surface_states_summary_nk{EIO_NK}.hdf5"
-    output_h5 = DATA_DIR / f"spin_fourier_h{tag}.hdf5"
-    output_csv = DATA_DIR / f"structure_factor_h{tag}.csv"
+    output_h5 = DATA_DIR / f"spin_fourier_{tag}.hdf5"
+    output_csv = DATA_DIR / f"structure_factor_{tag}.csv"
     if (output_h5.exists() or output_csv.exists()) and not overwrite:
-        raise FileExistsError(f"Outputs for field {tag} exist; pass --overwrite")
+        raise FileExistsError(f"Outputs for {tag} exist; pass --overwrite")
 
     with h5py.File(eio_path) as eio_h5:
         kf = np.squeeze(eio_h5["kf"][...])
@@ -78,13 +142,17 @@ def compute_field(field, snapshots_path, overwrite=False):
     # to the final state kprime.
     q_vectors = kf[None, :, :] - kf[:, None, :]
     nkf = len(kf)
-    warmup_snapshots = WARMUP_SNAPSHOTS_BY_FIELD[field]
-    n_used_snapshots = N_SNAPSHOTS - warmup_snapshots
+    n_used_snapshots = n_snapshots - warmup_snapshots
 
     mode = "w" if overwrite else "x"
-    structure_factors = np.empty((N_ANGLES, 3, nkf, nkf), dtype=float)
-    with h5py.File(snapshots_path) as snapshots_h5, h5py.File(output_h5, mode) as output:
-        coordinates, sublattices, lattice = prepare_interface_coordinates(snapshots_h5)
+    structure_factors = np.empty((n_angles, 3, nkf, nkf), dtype=float)
+    moment = None
+    with h5py.File(snapshots_path) as snapshots_h5, h5py.File(
+        output_h5, mode
+    ) as output:
+        coordinates, sublattices, lattice = prepare_interface_coordinates(
+            snapshots_h5, system_size, sites_per_sublattice
+        )
         # The geometric phase depends only on q and site position, so compute it
         # once and reuse it for every field angle, seed, and snapshot.
         phases = [
@@ -99,7 +167,7 @@ def compute_field(field, snapshots_path, overwrite=False):
         output.create_dataset("interface_lattice", data=lattice)
         fourier_h5 = output.create_dataset(
             "S_q",
-            shape=(N_ANGLES, 3, nkf, nkf, N_SEEDS, n_used_snapshots, 3),
+            shape=(n_angles, 3, nkf, nkf, N_SEEDS, n_used_snapshots, 3),
             dtype=np.complex128,
             chunks=(1, 1, nkf, nkf, 1, n_used_snapshots, 3),
             compression="gzip",
@@ -107,9 +175,10 @@ def compute_field(field, snapshots_path, overwrite=False):
             shuffle=True,
         )
         output.attrs.update(
+            scan=scan,
             field=field,
-            temperature=TEMPERATURE,
-            n_angles=N_ANGLES,
+            temperature=temperature,
+            n_angles=n_angles,
             n_seeds=N_SEEDS,
             snapshots_used=n_used_snapshots,
             warmup_snapshots=warmup_snapshots,
@@ -119,21 +188,13 @@ def compute_field(field, snapshots_path, overwrite=False):
 
         # Preserve individual seeds and snapshots here. They must remain
         # separate until the coherent scattering amplitude has been squared.
-        for angle in range(N_ANGLES):
+        for angle in range(n_angles):
+            input_angle = angle if scan == "in-plane" else None
             for sublattice, indices in enumerate(sublattices):
-                configurations = np.empty(
-                    (N_SEEDS, n_used_snapshots, len(indices), 3), dtype=float
+                configurations = read_configurations(
+                    snapshots_h5, scan, field, temperature, input_angle, indices,
+                    warmup_snapshots, n_snapshots,
                 )
-                for seed in range(N_SEEDS):
-                    for snapshot_index, timestep in enumerate(
-                        range(warmup_snapshots, N_SNAPSHOTS)
-                    ):
-                        path = (
-                            f"H{tag}/phi{angle}/kT{TEMPERATURE}/seed{seed}/"
-                            f"tstep{timestep}/configs"
-                        )
-                        configurations[seed, snapshot_index] = snapshots_h5[path][indices]
-
                 # S_q[ik, ikprime, seed, snapshot, spin_component]
                 # = sum_R exp(i q.r_R) S_R / sqrt(number of sites).
                 fourier = np.einsum(
@@ -148,34 +209,87 @@ def compute_field(field, snapshots_path, overwrite=False):
                 fourier_h5[angle, sublattice] = fourier
                 structure_factors[angle, sublattice] = structure_factor
             if angle == 0 or (angle + 1) % 10 == 0:
-                print(f"field {tag}: angle {angle + 1}/{N_ANGLES}", flush=True)
+                print(f"{tag}: orientation {angle + 1}/{n_angles}", flush=True)
         output.create_dataset("structure_factor", data=structure_factors)
+
+        if scan == "out-of-plane":
+            all_sites = np.arange(len(coordinates))
+            configurations = read_configurations(
+                snapshots_h5, scan, field, temperature, None, all_sites,
+                warmup_snapshots, n_snapshots,
+            )
+            moment = local_moment_summary(configurations, field, temperature)
 
     # Export the compact ensemble-averaged structure factor for inspection;
     # the much larger sample-resolved tensor remains in HDF5.
     pairs_per_sublattice = nkf * nkf
-    pd.DataFrame({
+    frame = pd.DataFrame({
         "field": field,
-        "angle": np.repeat(np.arange(N_ANGLES), 3 * pairs_per_sublattice),
+        "angle": np.repeat(np.arange(n_angles), 3 * pairs_per_sublattice),
         "sublattice": np.tile(
-            np.repeat(np.arange(3), pairs_per_sublattice), N_ANGLES
+            np.repeat(np.arange(3), pairs_per_sublattice), n_angles
         ),
-        "ik": np.tile(np.repeat(np.arange(nkf), nkf), N_ANGLES * 3),
-        "ikprime": np.tile(np.arange(nkf), N_ANGLES * 3 * nkf),
-        "qx": np.tile(q_vectors[..., 0].ravel(), N_ANGLES * 3),
-        "qy": np.tile(q_vectors[..., 1].ravel(), N_ANGLES * 3),
-        "qz": np.tile(q_vectors[..., 2].ravel(), N_ANGLES * 3),
+        "ik": np.tile(np.repeat(np.arange(nkf), nkf), n_angles * 3),
+        "ikprime": np.tile(np.arange(nkf), n_angles * 3 * nkf),
+        "qx": np.tile(q_vectors[..., 0].ravel(), n_angles * 3),
+        "qy": np.tile(q_vectors[..., 1].ravel(), n_angles * 3),
+        "qz": np.tile(q_vectors[..., 2].ravel(), n_angles * 3),
         "structure_factor": structure_factors.ravel(),
-    }).to_csv(output_csv, index=False)
+    })
+    if scan == "out-of-plane":
+        frame.insert(1, "temperature", temperature)
+        frame = frame.drop(columns="angle")
+    frame.to_csv(output_csv, index=False)
     print(f"Wrote {output_h5}")
     print(f"Wrote {output_csv}")
+    return moment
 
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--fields", nargs="+", type=float, default=FIELDS)
-parser.add_argument("--snapshots", type=str, default=str(DTO_SNAPSHOTS))
+parser.add_argument(
+    "--scan", choices=("in-plane", "out-of-plane"), default="in-plane"
+)
+parser.add_argument("--fields", nargs="+", type=float)
+parser.add_argument("--temperatures", nargs="+", type=float)
+parser.add_argument("--snapshots", type=str)
 parser.add_argument("--overwrite", action="store_true")
 args = parser.parse_args()
+
+if args.scan == "in-plane":
+    fields = args.fields or FIELDS
+    temperatures = args.temperatures or (TEMPERATURE,)
+    if tuple(temperatures) != (TEMPERATURE,):
+        raise ValueError(f"The archived in-plane scan is available only at T={TEMPERATURE}")
+    snapshots = args.snapshots or str(DTO_SNAPSHOTS)
+    settings = (SYSTEM_SIZE, SITES_PER_SUBLATTICE, N_ANGLES, N_SNAPSHOTS)
+else:
+    fields = args.fields or OUT_OF_PLANE_FIELDS
+    temperatures = args.temperatures or OUT_OF_PLANE_TEMPERATURES
+    snapshots = args.snapshots or str(DTO_OUT_OF_PLANE_SNAPSHOTS)
+    settings = (
+        OUT_OF_PLANE_SYSTEM_SIZE,
+        OUT_OF_PLANE_SITES_PER_SUBLATTICE,
+        1,
+        OUT_OF_PLANE_N_SNAPSHOTS,
+    )
+
 DATA_DIR.mkdir(exist_ok=True)
-for selected_field in args.fields:
-    compute_field(selected_field, args.snapshots, overwrite=args.overwrite)
+moments = []
+for selected_field in fields:
+    for selected_temperature in temperatures:
+        warmup = (
+            WARMUP_SNAPSHOTS_BY_FIELD[selected_field]
+            if args.scan == "in-plane"
+            else OUT_OF_PLANE_WARMUP_SNAPSHOTS
+        )
+        result = compute_condition(
+            args.scan, selected_field, selected_temperature, snapshots,
+            *settings, warmup, overwrite=args.overwrite,
+        )
+        if result is not None:
+            moments.append(result)
+
+if moments:
+    moment_output = DATA_DIR / "dto_magnetization_out_of_plane.csv"
+    pd.DataFrame(moments).to_csv(moment_output, index=False)
+    print(f"Wrote {moment_output}")

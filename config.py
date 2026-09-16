@@ -9,8 +9,14 @@ MODEL_DIR = ROOT / "model"
 DATA_DIR = ROOT / "data"
 FIGURE_DIR = ROOT / "figures"
 DTO_SNAPSHOTS = ROOT / "inputs" / "dto" / "gathered_snapshots_hex.hdf5"
+DTO_OUT_OF_PLANE_SNAPSHOTS = (
+    ROOT / "inputs" / "dto" / "gathered_snapshots_out_of_plane_hex.hdf5"
+)
 EIO_REFERENCE = ROOT / "reference" / "eio" / "surface_states_summary_nk24.hdf5"
 TRANSPORT_REFERENCE_DIR = ROOT / "reference" / "transport"
+OUT_OF_PLANE_TRANSPORT_REFERENCE = (
+    TRANSPORT_REFERENCE_DIR / "rho_out_of_plane_size4_nk24.csv"
+)
 
 # EIO slab and surface-state selection.
 EIO_NK = 24
@@ -47,7 +53,27 @@ T2_NORMALIZATION = (SITES_PER_SUBLATTICE * 2) ** 0.5
 ANGLE_SMOOTHING_SIGMA = 1.0
 ENERGY_BROADENING = 0.01
 
+# Recovered 4x4 out-of-plane [111] field scan. Unlike the in-plane workflow,
+# this scan varies field magnitude at two temperatures and has no angle axis.
+OUT_OF_PLANE_FIELDS = (0.0, 0.2, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0,
+                       6.0, 7.0, 8.0, 9.0)
+OUT_OF_PLANE_TEMPERATURES = (0.5, 4.0)
+OUT_OF_PLANE_N_SNAPSHOTS = 10
+OUT_OF_PLANE_WARMUP_SNAPSHOTS = 5
+OUT_OF_PLANE_SYSTEM_SIZE = 4
+OUT_OF_PLANE_SITES_PER_SUBLATTICE = 16
+OUT_OF_PLANE_FIELD_TO_TESLA = 1 / 6.72
+
 
 def field_tag(field):
     """Match the floating-point labels in Zhengtao's HDF5 groups."""
     return str(float(field))
+
+
+def condition_tag(scan, field, temperature=None):
+    """Return a collision-free filename tag for one scan condition."""
+    if scan == "in-plane":
+        return f"h{field_tag(field)}"
+    if temperature is None:
+        raise ValueError("Out-of-plane outputs require a temperature")
+    return f"out_of_plane_h{field_tag(field)}_t{field_tag(temperature)}"

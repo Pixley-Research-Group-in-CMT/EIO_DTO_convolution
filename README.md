@@ -1,6 +1,9 @@
 # EIO/DTO interface convolution
 
-This directory contains a clean, linear reproduction of the archived U=1.3, 8x8/24x24 EIO/DTO interface-transport calculation.
+This directory contains clean, linear reproductions of two archived U=1.3
+EIO/DTO interface-transport calculations: the published 8x8 in-plane angular
+scan and the recovered 4x4 out-of-plane field scan. Both use the same EIO
+surface states and interface contraction.
 
 The workflow is
 
@@ -44,10 +47,11 @@ wannier90_centres.xyz
 
 ### DTO
 
-The expected DTO input is:
+The expected DTO inputs are:
 
 ```text
 inputs/dto/gathered_snapshots_hex.hdf5
+inputs/dto/gathered_snapshots_out_of_plane_hex.hdf5
 ```
 
 On the original workstation this can be linked to Zhengtao's surviving 8x8 snapshot file. When moving the repository, replace that link with the corresponding HDF5 file or pass its path explicitly to `02_compute_dto_fourier.py --snapshots`.
@@ -60,6 +64,13 @@ H{field}/phi{angle}/kT0.5/seed{seed}/tstep{snapshot}/configs
 ```
 
 with fields `0.1, 0.5, 1.0, 2.0, 4.0`, 60 angles, four seeds, and 20 snapshots.
+
+The out-of-plane file instead uses
+`H{field}/kT{temperature}/seed{seed}/tstep{snapshot}/configs`, with 12 field
+magnitudes from 0 through 9, temperatures 0.5 and 4.0, four seeds, and ten
+snapshots. The first five snapshots are discarded. This is the 4x4 result
+only; the unreliable larger-system zero-field replacement from the old
+notebooks is intentionally excluded.
 
 ## Run the workflow
 
@@ -86,6 +97,20 @@ python 04_compute_transport.py --fields 0.1
 
 The plotting script expects all five default fields.
 
+Run the recovered out-of-plane scan with the same numbered scripts:
+
+```bash
+python 01_generate_eio.py
+python 02_compute_dto_fourier.py --scan out-of-plane
+python 03_compute_scattering.py --scan out-of-plane
+python 04_compute_transport.py --scan out-of-plane
+python 05_plot_transport.py --scan out-of-plane
+```
+
+The default remains `--scan in-plane`, so the published workflow and filenames
+are unchanged. Both workflows accept restricted `--fields`; the out-of-plane
+stages also accept `--temperatures`.
+
 ## Stage 1: EIO surface states
 
 `01_generate_eio.py`:
@@ -108,7 +133,9 @@ The generated state summary is automatically compared with the small archived re
 
 ## Stage 2: DTO Fourier amplitudes
 
-`02_compute_dto_fourier.py` rotates and rescales the DTO coordinates exactly as in the archived 8x8 notebook, selects the 192 interfacial kagome spins, and separates them into three 64-site sublattices.
+`02_compute_dto_fourier.py` rotates and rescales the DTO coordinates exactly as
+in the archived notebooks. The in-plane scan selects three 64-site kagome
+sublattices; the out-of-plane scan selects three 16-site sublattices.
 
 For every field angle and every `q = k' - k`, it saves
 
@@ -126,6 +153,10 @@ data/structure_factor_h{field}.csv
 ```
 
 The CSV contains the thermally averaged scalar structure factor. The sample-resolved complex amplitudes remain in HDF5 because they are needed for the coherent interface contraction.
+
+For the out-of-plane scan, this stage also saves
+`data/dto_magnetization_out_of_plane.csv`. This is the archived mean magnitude
+of each site's thermally averaged moment, not a susceptibility.
 
 ## Stage 3: Interface scattering
 
@@ -147,7 +178,10 @@ data/scattering_h{field}.hdf5
 data/scattering_h{field}.csv
 ```
 
-Both the raw matrix elements and the historical `gaussian_filter1d(sigma=1)` angular smoothing are saved. Smoothing is never substituted for the raw result.
+Both the raw matrix elements and the historical `gaussian_filter1d(sigma=1)`
+angular smoothing are saved for the in-plane scan. The out-of-plane scan has no
+angle coordinate and is not smoothed. Its seed-based matrix-element uncertainty
+is propagated through transport.
 
 ## Stage 4: Boltzmann transport
 
@@ -177,15 +211,25 @@ data/relaxation_times.csv
 
 The resistivity is in arbitrary units because the absolute interface Kondo coupling was not fixed in the archived calculation.
 
+The out-of-plane outputs are `data/transport_out_of_plane.csv`,
+`data/relaxation_times_out_of_plane.csv`, and
+`data/out_of_plane_validation.json`. The validation file compares the complete
+4x4 result against the archived CSV retained under `reference/transport/`.
+
 ## Stage 5: Plotting
 
 `05_plot_transport.py` produces:
 
 ```text
 figures/interface_resistivity.pdf
+figures/out_of_plane_field_response.pdf    # with --scan out-of-plane
 ```
 
 Panel a shows the unsmoothed resistivity. Panel b shows the historically smoothed result normalized to the zero-angle value. No noise replacement or additional symmetry mirroring is applied. Final figures are saved only as vector PDFs.
+
+The out-of-plane figure instead shows interface resistivity and the DTO local
+moment versus field for both temperatures. The archived conversion
+`H[T] = H[simulation units] / 6.72` is retained.
 
 ## Faithful historical conventions
 
