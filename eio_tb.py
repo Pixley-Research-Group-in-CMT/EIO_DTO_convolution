@@ -3,6 +3,12 @@ import numpy as np
 
 
 def load_bulk_model(cell_indices_path, hopping_path, wannier_centres_path):
+    """Read the real-space Wannier Hamiltonian and its orbital geometry.
+
+    The returned hopping tensor is indexed by source orbital, target orbital,
+    and lattice translation. Its last input axis stores real and imaginary
+    parts separately.
+    """
     lattice_vectors = 5.1350 * np.array([
         [1, 1, 0],
         [0, 1, 1],
@@ -12,6 +18,8 @@ def load_bulk_model(cell_indices_path, hopping_path, wannier_centres_path):
     cell_indices = np.loadtxt(cell_indices_path, delimiter=",", dtype=int)
     hopping_components = np.loadtxt(hopping_path, delimiter=",", dtype=float)
 
+    # Reconstruct the complex hopping tensor written by the upstream
+    # DFT/Wannier workflow.
     n_orbitals = len(wannier_centres)
     hopping_components = hopping_components.reshape(
         n_orbitals, n_orbitals, len(cell_indices), 2
@@ -59,6 +67,8 @@ def build_slab(bulk):
     lattice_vectors = bulk["lattice_vectors"]
     cell_indices = bulk["cell_indices"]
     hoppings = bulk["hoppings"]
+    # A bulk translation changes the [111] layer index by -(n1+n2+n3).
+    # Only offsets up to two layers survive the real-space hopping cutoff.
     layer_offsets = -np.sum(cell_indices, axis=1)
 
     slab_hoppings = {}
@@ -79,6 +89,7 @@ def transform_to_slab_coordinates(bulk, slab):
     in_plane_vectors[2] = np.cross(in_plane_vectors[0], in_plane_vectors[1])
     reciprocal_vectors = 2 * np.pi * np.linalg.inv(in_plane_vectors)
 
+    # Define Cartesian x and y in the interface plane; z is the [111] normal.
     x_axis = in_plane_vectors[0] / np.linalg.norm(in_plane_vectors[0])
     y_axis = in_plane_vectors[1] - np.dot(in_plane_vectors[1], x_axis) * x_axis
     y_axis /= np.linalg.norm(y_axis)
@@ -97,6 +108,7 @@ def transform_to_slab_coordinates(bulk, slab):
 
 
 def _inside_polygon(point, vertices):
+    """Return whether a 2D momentum lies inside the hexagonal Brillouin zone."""
     x, y = point
     inside = False
     for i, (x1, y1) in enumerate(vertices):
@@ -110,6 +122,7 @@ def _inside_polygon(point, vertices):
 
 
 def _select_hexagonal_cell(reciprocal_vectors, unit_cell_grid):
+    """Fold a parallelogram momentum grid into one hexagonal unit cell."""
     reciprocal_length = np.linalg.norm(reciprocal_vectors[:, 0])
     radius = reciprocal_length / np.sqrt(3)
     eps = 1e-9
@@ -122,6 +135,8 @@ def _select_hexagonal_cell(reciprocal_vectors, unit_cell_grid):
         [radius / 2 + eps, -radius * np.sqrt(3) / 2 + eps],
     ])
 
+    # Include neighboring reciprocal cells before clipping so that the final
+    # hexagon contains the correct number of points near every boundary.
     shifted_grids = []
     for i, j in ((0, 0), (-1, 0), (0, -1), (-1, -1)):
         shift = i * reciprocal_vectors[:, 0] + j * reciprocal_vectors[:, 1]
@@ -154,6 +169,8 @@ def hexagonal_momentum_grid(reciprocal_vectors, nk):
             shift = i * reciprocal_vectors[:, 0] + j * reciprocal_vectors[:, 1]
             neighboring_grids.append(hexagonal_grid + shift)
 
+    # Boundary points can enter the hexagon through more than one reciprocal
+    # translation. Keep the historical positive-k representative once.
     repeated = []
     for momentum in np.concatenate(neighboring_grids):
         matches = np.where(
@@ -167,6 +184,8 @@ def hexagonal_momentum_grid(reciprocal_vectors, nk):
 
 def slab_hamiltonian(momentum, slab_hoppings, slab_vectors, n_orbitals, n_layers):
     """Construct the open-boundary [111] slab Hamiltonian at one momentum."""
+    # Fourier transform each group of real-space hoppings into a block that
+    # connects layers separated by the corresponding offset.
     blocks = {}
     for offset, hoppings in slab_hoppings.items():
         block = np.zeros((n_orbitals, n_orbitals), dtype=complex)
@@ -174,6 +193,8 @@ def slab_hamiltonian(momentum, slab_hoppings, slab_vectors, n_orbitals, n_layers
             block += hopping * np.exp(-1j * np.dot(momentum, vector))
         blocks[offset] = block
 
+    # Assemble the block-banded slab Hamiltonian. Omitting targets outside the
+    # layer range imposes open boundaries along [111].
     indices = np.arange(n_orbitals * n_layers).reshape(n_layers, n_orbitals).T
     hamiltonian = np.zeros(
         (n_orbitals * n_layers, n_orbitals * n_layers), dtype=complex

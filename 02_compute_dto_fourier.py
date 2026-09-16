@@ -12,6 +12,11 @@ from config import (DATA_DIR, DTO_SNAPSHOTS, EIO_DTO_LATTICE_RATIO, EIO_NK,
 
 
 def prepare_interface_coordinates(snapshot_h5):
+    """Align DTO with EIO and identify the three interfacial kagome sublattices.
+
+    Returns the transformed coordinates, global site indices for each DTO
+    sublattice, and the two-dimensional triangular Bravais lattice.
+    """
     coordinates = snapshot_h5["coords"][...]
     theta = -30 * np.pi / 180
     rotation = np.array([
@@ -21,6 +26,8 @@ def prepare_interface_coordinates(snapshot_h5):
     ])
     coordinates = coordinates @ rotation * 10 * EIO_DTO_LATTICE_RATIO
 
+    # Infer the in-plane Bravais vectors from the triangular layer beneath the
+    # interface; this reproduces the geometry convention of the old notebooks.
     triangular = coordinates[coordinates[:, 2] < 2]
     length = 2 * triangular[:, 0].max()
     lattice = np.array([
@@ -29,6 +36,8 @@ def prepare_interface_coordinates(snapshot_h5):
         [0, 0, length],
     ]) / SYSTEM_SIZE
 
+    # The first kagome layer contains three translated triangular sublattices.
+    # Classify sites by testing integer coordinates in the Bravais basis.
     kagome = np.where((coordinates[:, 2] > 2) & (coordinates[:, 2] < 5))[0]
     kagome_coordinates = coordinates[kagome]
     sublattices = []
@@ -55,6 +64,7 @@ def prepare_interface_coordinates(snapshot_h5):
 
 
 def compute_field(field, snapshots_path, overwrite=False):
+    """Compute sample-resolved DTO spin amplitudes for one field magnitude."""
     tag = field_tag(field)
     eio_path = DATA_DIR / f"surface_states_summary_nk{EIO_NK}.hdf5"
     output_h5 = DATA_DIR / f"spin_fourier_h{tag}.hdf5"
@@ -64,6 +74,8 @@ def compute_field(field, snapshots_path, overwrite=False):
 
     with h5py.File(eio_path) as eio_h5:
         kf = np.squeeze(eio_h5["kf"][...])
+    # q[ik, ikprime] is the momentum transferred from the initial EIO state k
+    # to the final state kprime.
     q_vectors = kf[None, :, :] - kf[:, None, :]
     nkf = len(kf)
     warmup_snapshots = WARMUP_SNAPSHOTS_BY_FIELD[field]
@@ -73,6 +85,8 @@ def compute_field(field, snapshots_path, overwrite=False):
     structure_factors = np.empty((N_ANGLES, 3, nkf, nkf), dtype=float)
     with h5py.File(snapshots_path) as snapshots_h5, h5py.File(output_h5, mode) as output:
         coordinates, sublattices, lattice = prepare_interface_coordinates(snapshots_h5)
+        # The geometric phase depends only on q and site position, so compute it
+        # once and reuse it for every field angle, seed, and snapshot.
         phases = [
             np.exp(1j * np.einsum(
                 "ijm,am->ija", q_vectors, coordinates[indices]
@@ -103,6 +117,8 @@ def compute_field(field, snapshots_path, overwrite=False):
             momentum_convention="q = kprime - k",
         )
 
+        # Preserve individual seeds and snapshots here. They must remain
+        # separate until the coherent scattering amplitude has been squared.
         for angle in range(N_ANGLES):
             for sublattice, indices in enumerate(sublattices):
                 configurations = np.empty(
@@ -118,10 +134,14 @@ def compute_field(field, snapshots_path, overwrite=False):
                         )
                         configurations[seed, snapshot_index] = snapshots_h5[path][indices]
 
+                # S_q[ik, ikprime, seed, snapshot, spin_component]
+                # = sum_R exp(i q.r_R) S_R / sqrt(number of sites).
                 fourier = np.einsum(
                     "ija,snam->ijsnm", phases[sublattice], configurations,
                     optimize=True,
                 ) / np.sqrt(len(indices))
+                # This scalar diagnostic is averaged over the Monte Carlo
+                # ensemble; the complex S_q amplitudes remain sample resolved.
                 structure_factor = np.mean(
                     np.sum(np.abs(fourier) ** 2, axis=-1), axis=(2, 3)
                 )
@@ -131,6 +151,8 @@ def compute_field(field, snapshots_path, overwrite=False):
                 print(f"field {tag}: angle {angle + 1}/{N_ANGLES}", flush=True)
         output.create_dataset("structure_factor", data=structure_factors)
 
+    # Export the compact ensemble-averaged structure factor for inspection;
+    # the much larger sample-resolved tensor remains in HDF5.
     pairs_per_sublattice = nkf * nkf
     pd.DataFrame({
         "field": field,

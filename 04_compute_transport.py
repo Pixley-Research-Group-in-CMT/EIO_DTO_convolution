@@ -10,7 +10,11 @@ from config import (DATA_DIR, E_FERMI, EIO_NK, ENERGY_BROADENING, FIELDS,
 
 
 def historical_delta(energy1, energy2, width):
-    """Gaussian approximation used in the archived notebooks."""
+    """Return the nonstandard Gaussian delta used in the archived notebooks.
+
+    The exponent lacks the conventional factor of two. It is intentionally
+    retained here so the cleaned workflow reproduces the historical curves.
+    """
     return (
         np.exp(-(energy1 - energy2) ** 2 / width ** 2)
         / np.sqrt(2 * np.pi * width ** 2)
@@ -18,6 +22,7 @@ def historical_delta(energy1, energy2, width):
 
 
 def compute_field(field):
+    """Convert one field's scattering matrix into relaxation and transport data."""
     tag = field_tag(field)
     eio_path = DATA_DIR / f"surface_states_summary_nk{EIO_NK}.hdf5"
     scattering_path = DATA_DIR / f"scattering_h{tag}.hdf5"
@@ -26,6 +31,8 @@ def compute_field(field):
         kf = np.squeeze(eio_h5["kf"][...])
         energies = np.squeeze(eio_h5["eigf"][...])
         velocities = eio_h5["v_kf"][...]
+        # Weight transport by the probability carried on the three EIO
+        # sublattices that touch the DTO interface.
         surface_weight = np.sum(
             np.abs(eio_h5["proj_sl1"][...]) ** 2
             + np.abs(eio_h5["proj_sl2"][...]) ** 2
@@ -37,6 +44,9 @@ def compute_field(field):
             "smoothed": scattering_h5["t2_smoothed"][...],
         }
 
+    # Precompute the transport vertex and the two broadened energy constraints:
+    # elastic scattering requires e_k = e_kprime, while conduction is sampled
+    # near the fixed Fermi energy.
     norms = np.linalg.norm(kf, axis=1)
     cos_theta = (kf @ kf.T) / np.outer(norms, norms)
     pair_delta = historical_delta(
@@ -46,6 +56,8 @@ def compute_field(field):
 
     transport_rows = []
     relaxation_rows = []
+    # Evaluate raw and angle-smoothed matrix elements independently. The
+    # relaxation rate is sum_kprime |T|^2 delta(e-e') (1-cos theta).
     for mode, matrix_elements in t2.items():
         inverse_tau = np.asarray([
             np.sum(matrix_element * pair_delta * (1 - cos_theta), axis=1)
@@ -57,6 +69,8 @@ def compute_field(field):
                 f"Non-positive scattering rate at field {tag}, angle {angle}, ik {ik}"
             )
 
+        # Each retained EIO state contributes tau_k v_x^2, restricted to the
+        # Fermi surface and weighted by its interface localization.
         sigma_terms = (
             fermi_delta[None, :]
             * np.abs(velocities[:, 0])[None, :] ** 2
@@ -92,6 +106,8 @@ def compute_field(field):
             "sigma_term": sigma_terms.ravel(),
         }))
 
+        # The archived raw CSVs are numerical regression references, not extra
+        # inputs to the transport calculation.
         if mode == "raw":
             reference_path = TRANSPORT_REFERENCE_DIR / f"rho_h{tag}_raw.csv"
             if reference_path.exists():
@@ -114,6 +130,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--fields", nargs="+", type=float, default=FIELDS)
 args = parser.parse_args()
 
+# Collect all requested fields into two collaborator-friendly summary tables.
 all_transport = []
 all_relaxation = []
 for selected_field in args.fields:

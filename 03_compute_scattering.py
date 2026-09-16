@@ -16,6 +16,8 @@ PAULI = np.array([
     [[0, -1j], [1j, 0]],
     [[1, 0], [0, -1]],
 ])
+# Each DTO moment couples through two interface bonds to neighboring EIO
+# sublattices. BOND_VECTORS supplies the corresponding phase displacement.
 EIO_NEIGHBORS = {0: (1, 2), 1: (1, 3), 2: (2, 3)}
 
 BOND_DISTANCE = 7.26198663999854 / (2 * np.sqrt(3))
@@ -29,6 +31,7 @@ BOND_VECTORS = BOND_DISTANCE * np.array([
 
 
 def compute_field(field, overwrite=False):
+    """Build and ensemble-average |T(k,kprime)|^2 for one field magnitude."""
     tag = field_tag(field)
     eio_path = DATA_DIR / f"surface_states_summary_nk{EIO_NK}.hdf5"
     spin_path = DATA_DIR / f"spin_fourier_h{tag}.hdf5"
@@ -52,14 +55,20 @@ def compute_field(field, overwrite=False):
         if not np.allclose(q_vectors, expected_q):
             raise ValueError("EIO momenta do not match the DTO Fourier file")
 
+        # t2_raw[angle, ik, ikprime] is the final sample-averaged scattering
+        # strength. The inner amplitude keeps seed, snapshot, and spin indices.
         t2_raw = np.empty((n_angles, nkf, nkf), dtype=float)
         for angle in range(n_angles):
             for ik in range(nkf):
                 amplitude = np.zeros(
                     (nkf, n_seeds, n_snapshots, 2, 2), dtype=complex
                 )
+                # Sum all sublattices, bonds, and orbitals at the amplitude
+                # level. This retains their interference before taking |T|^2.
                 for dto_sublattice in range(3):
                     spin = spin_fourier[angle, dto_sublattice, ik]
+                    # Contract the three Cartesian spin components with the
+                    # Pauli matrices, leaving incoming/outgoing spin indices.
                     spin_sigma = np.einsum(
                         "ksnm,mab->ksnab", spin, PAULI, optimize=True
                     )
@@ -80,6 +89,8 @@ def compute_field(field, overwrite=False):
                             spin_sigma,
                             optimize=True,
                         )
+                # Only after the coherent sum do we trace over spin and average
+                # over statistically independent seeds and retained snapshots.
                 amplitude_squared = np.sum(np.abs(amplitude) ** 2, axis=(-1, -2))
                 t2_raw[angle, ik] = np.mean(
                     amplitude_squared, axis=(1, 2)
@@ -87,6 +98,8 @@ def compute_field(field, overwrite=False):
             if angle == 0 or (angle + 1) % 10 == 0:
                 print(f"field {tag}: angle {angle + 1}/{n_angles}", flush=True)
 
+    # Preserve both the raw result and the notebook's one-angle Gaussian
+    # smoothing so collaborators can distinguish data from presentation.
     t2_smoothed = gaussian_filter1d(
         t2_raw, sigma=ANGLE_SMOOTHING_SIGMA, axis=0
     )
@@ -104,6 +117,7 @@ def compute_field(field, overwrite=False):
             smoothing_mode="scipy.ndimage.gaussian_filter1d default reflect mode",
         )
 
+    # Flatten the momentum-pair tensor into a human-readable companion CSV.
     pairs_per_angle = nkf * nkf
     pd.DataFrame({
         "field": field,

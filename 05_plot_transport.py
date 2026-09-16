@@ -22,6 +22,8 @@ mpl.rcParams.update({
 data = pd.read_csv(DATA_DIR / "transport_summary.csv")
 colors = plt.get_cmap("magma")(np.linspace(0.18, 0.82, len(FIELDS)))
 
+# Panel a shows the absolute raw interface resistivity. Panel b isolates the
+# angular magnetoresistance after applying the archived smoothing convention.
 figure, axes = plt.subplots(1, 2, figsize=(7.2, 3.0), constrained_layout=True)
 for field, color in zip(FIELDS, colors):
     raw = data[(data["field"] == field) & (data["mode"] == "raw")]
@@ -44,6 +46,8 @@ axes[1].set_xlabel(r"Field angle $\phi$ (degrees)")
 axes[1].set_ylabel(r"$[\rho(\phi)-\rho(0)]/\rho(0)$")
 axes[1].text(0.02, 0.96, "b", transform=axes[1].transAxes, va="top", fontweight="bold")
 
+# Use a common angular range so the field-dependent curves can be compared
+# directly across the two panels.
 for axis in axes:
     axis.set_xlim(0, 60)
     axis.set_xticks([0, 15, 30, 45, 60])

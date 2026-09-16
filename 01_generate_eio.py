@@ -14,6 +14,7 @@ from eio_tb import (build_slab, hexagonal_momentum_grid, load_bulk_model,
 
 
 def phase_aligned_spinor_error(generated, reference):
+    """Compare projected spinors after removing one global phase per state."""
     generated = np.concatenate(
         [generated[f"proj_sl{i}"].reshape(len(generated["eigf"]), -1)
          for i in (1, 2, 3)], axis=1)
@@ -26,11 +27,19 @@ def phase_aligned_spinor_error(generated, reference):
 
 
 def generate_surface_states(nk, overwrite=False):
+    """Diagonalize the EIO [111] slab and retain near-Fermi top-surface states.
+
+    The compact output contains only the momenta needed by the interface
+    calculation, together with their energies, velocities, and orbital-spin
+    amplitudes on the three interfacial EIO sublattices.
+    """
     output = DATA_DIR / f"surface_states_summary_nk{nk}.hdf5"
     validation_output = DATA_DIR / f"eio_validation_nk{nk}.json"
     if output.exists() and not overwrite:
         raise FileExistsError(f"{output} exists; pass --overwrite to replace it")
 
+    # Convert the bulk real-space Wannier model into an open [111] slab, then
+    # sample its two-dimensional hexagonal Brillouin zone.
     bulk = load_bulk_model(
         MODEL_DIR / "cellindices.txt",
         MODEL_DIR / "ham0.txt",
@@ -43,6 +52,8 @@ def generate_surface_states(nk, overwrite=False):
     k_grid = hexagonal_momentum_grid(geometry["reciprocal_vectors"], nk)
     assert k_grid.shape == (nk * nk, 3)
 
+    # On the top surface, the three x-coordinate groups are the three kagome
+    # sublattices. Each group has shape (3 t2g orbitals, 2 spins).
     positions = geometry["wannier_centres"]
     top = positions[:, 2] > 4
     masks = [
@@ -72,6 +83,7 @@ def generate_surface_states(nk, overwrite=False):
     }
 
     def diagonalize(k):
+        """Return the slab Hamiltonian and all eigenpairs at one momentum."""
         hamiltonian = slab_hamiltonian(
             k,
             slab["hoppings"],
@@ -82,6 +94,8 @@ def generate_surface_states(nk, overwrite=False):
         energies, states = np.linalg.eigh(hamiltonian)
         return hamiltonian, energies, states
 
+    # Search the full nk-by-nk grid, but save only a top-surface state lying
+    # within ENERGY_WINDOW of the fixed Fermi energy at a given momentum.
     for ik, k in enumerate(k_grid):
         hamiltonian, energies, states = diagonalize(k)
         projections = [states[index, :] for index in indices]
@@ -90,6 +104,8 @@ def generate_surface_states(nk, overwrite=False):
             validation["max_hermiticity_error"],
             float(np.max(abs(hamiltonian - hamiltonian.conj().T))),
         )
+        # Eigenpair checks are expensive, so evaluate them at representative
+        # momenta while checking Hermiticity at every momentum.
         if ik in (0, len(k_grid) // 2, len(k_grid) - 1):
             validation["max_eigenpair_residual"] = max(
                 validation["max_eigenpair_residual"],
@@ -137,6 +153,8 @@ def generate_surface_states(nk, overwrite=False):
     if not all(np.isfinite(array).all() for array in arrays.values()):
         raise ValueError("Non-finite values found in generated EIO data")
 
+    # HDF5 stores the scientific data; the neighboring JSON records numerical
+    # checks and comparisons against the archived nk=24 fingerprint.
     mode = "w" if overwrite else "x"
     with h5py.File(output, mode) as h5:
         for name, values in arrays.items():

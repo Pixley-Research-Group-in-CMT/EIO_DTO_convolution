@@ -3,6 +3,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+# Keep every stage on the same directory layout so the numbered scripts can be
+# run independently without passing paths between them.
 MODEL_DIR = ROOT / "model"
 DATA_DIR = ROOT / "data"
 FIGURE_DIR = ROOT / "figures"
@@ -18,7 +20,9 @@ E_FERMI = 5.142059246119027
 SURFACE_WEIGHT_CUTOFF = 0.5
 ENERGY_WINDOW = 0.01
 
-# DTO snapshot sampling used by the archived 8x8 workflow.
+# DTO snapshot sampling used by the archived 8x8 in-plane-field workflow.
+# Each field contains 60 field directions, four Monte Carlo seeds, and a time
+# series of spin configurations for every seed.
 FIELDS = (0.1, 0.5, 1.0, 2.0, 4.0)
 N_ANGLES = 60
 TEMPERATURE = 0.5
