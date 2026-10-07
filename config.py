@@ -1,17 +1,20 @@
-"""Shared parameters for the archived EIO/DTO interface calculation."""
+"""Shared parameters for the EIO/TTO dynamical interface calculation."""
+import os
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
+OUTPUT_ROOT = Path(os.environ.get("EIO_TTO_OUTPUT_ROOT", ROOT)).resolve()
 # Keep every stage on the same directory layout so the numbered scripts can be
 # run independently without passing paths between them.
 MODEL_DIR = ROOT / "model"
-DATA_DIR = ROOT / "data"
-FIGURE_DIR = ROOT / "figures"
+DATA_DIR = OUTPUT_ROOT / "data"
+FIGURE_DIR = OUTPUT_ROOT / "figures"
 DTO_SNAPSHOTS = ROOT / "inputs" / "dto" / "gathered_snapshots_hex.hdf5"
 DTO_OUT_OF_PLANE_SNAPSHOTS = (
     ROOT / "inputs" / "dto" / "gathered_snapshots_out_of_plane_hex.hdf5"
 )
+GMFT_IN_PLANE_MIN = ROOT.parent / "gMFT_in_plane_min"
 EIO_REFERENCE = ROOT / "reference" / "eio" / "surface_states_summary_nk24.hdf5"
 TRANSPORT_REFERENCE_DIR = ROOT / "reference" / "transport"
 OUT_OF_PLANE_TRANSPORT_REFERENCE = (
@@ -52,6 +55,33 @@ ORBITAL_HOPPINGS = (1.0, 1.0, 1.0)
 T2_NORMALIZATION = (SITES_PER_SUBLATTICE * 2) ** 0.5
 ANGLE_SMOOTHING_SIGMA = 1.0
 ENERGY_BROADENING = 0.01
+
+# Dynamical TTO calculation.  The finite-field gMFT tables use J_zz as their
+# energy unit; this explicit conversion puts their spinon frequencies in the
+# eV units used by the EIO tight-binding calculation.  0.17 meV is the default
+# TTO scale, and can be overridden from the stage-2 command line.
+TTO_J_ZZ_EV = 0.17e-3
+TTO_J_PM_RATIO = 0.20
+TTO_J_PMPM_RATIO = 0.0
+# Default field and angle grid for the independent high-field spin-wave scan.
+TTO_FIELD_RATIOS = (0.01, 0.15, 0.20, 0.25)
+TTO_DSSF_NK = 8
+TTO_Q_PERP_MODE = "slice"
+TTO_N_Q_PERP = 8
+TTO_DSSF_BROADENING_EV = 0.02e-3
+TTO_CUBIC_LATTICE_ANGSTROM = 10.154
+TTO_INTERFACE_SUBLATTICES = (1, 2, 3)
+TTO_SPIN_WAVE_FIELDS = (0.15, 0.20, 0.25)
+TTO_SPIN_WAVE_THETA_DEGREES = 90.0
+TTO_SPIN_WAVE_PHI_OFFSET_DEGREES = 0.1
+# Evaluate only phi >= 0; the transport stage mirrors the result to -phi.
+TTO_SPIN_WAVE_PHI_START_DEGREES = 0.0
+TTO_SPIN_WAVE_PHI_STOP_DEGREES = 180.0
+TTO_SPIN_WAVE_N_PHI = 91
+TTO_SPIN_WAVE_REFLECT_NEGATIVE_PHI = True
+TTO_SPIN_LENGTH = 0.5
+TTO_SPIN_WAVE_REGULARIZATION = 1e-8
+TTO_SPIN_WAVE_STABILITY_TILT = 1e-2
 
 # Recovered 4x4 out-of-plane [111] field scan. Unlike the in-plane workflow,
 # this scan varies field magnitude at two temperatures and has no angle axis.

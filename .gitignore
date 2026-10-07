@@ -7,3 +7,4 @@ inputs/dto/*.hdf5
 
 figures/*
 !figures/*.pdf
+slurm_config_snapshots/
