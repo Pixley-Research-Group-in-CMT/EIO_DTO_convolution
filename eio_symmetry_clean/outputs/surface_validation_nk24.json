@@ -1,0 +1,18 @@
+{
+  "nk": 24,
+  "momenta": 576,
+  "selected_states": 15,
+  "max_hermiticity_error_eV": 1.716587549445839e-16,
+  "model_sha256": {
+    "cellindices.txt": "744a48ebe339fafa88605fd37c05af7dcbbe5c9ac928d0daa8e420c28040924b",
+    "ham0.txt": "3342e2bd137df341f4f6199bafa440161632cfd03f8053dfd9f11b335250feb9",
+    "wannier90_centres.xyz": "9c59ff55e0c8e4c73f951459d2bc89c5cfb30fc6601237ee876bc8120ec573a1"
+  },
+  "archived_reference_errors": {
+    "kf": 2.7755575615628914e-17,
+    "eigf_eV": 0.0013982762477739996,
+    "band_indices": 0,
+    "radial_velocity": 0.009947074441951063,
+    "projected_spinors_phase_aligned": 0.004295483415219512
+  }
+}
