@@ -6,6 +6,11 @@ import numpy as np
 import pandas as pd
 
 from config import DATA_DIR, EIO_NK, ORBITAL_HOPPINGS
+from swt_transport_components import (
+    combine_transport_components,
+    transport_component_definition,
+)
+from tto_spin_wave import ONE_MAGNON_MODE_COMPONENTS
 
 
 # Each interfacial TTO kagome site has two neighboring EIO kagome sites.
@@ -29,7 +34,7 @@ THEORIES = {
     "spin-wave": {
         "input": "tto_spin_wave_structure_factor.hdf5",
         "output": "tto_spin_wave_scattering",
-        "components": ("one_magnon", "two_magnon", "bragg", "total"),
+        "components": ("one_magnon", "two_magnon"),
     },
 }
 
@@ -50,7 +55,15 @@ def compute(theory, overwrite=False):
         }
         kf = np.squeeze(eio_h5["kf"][...])
         phi = dssf_h5["phi_degrees"][...]
-        fields = dssf_h5["h_over_J_zz"][...]
+        extra_coordinates = {name: dssf_h5[name][...] for name in
+                             ("evaluated_phi_degrees", "converged", "mf_converged", "dssf_valid")
+                             if name in dssf_h5}
+        field_key = (
+            "mu_B_B_over_J_zz"
+            if "mu_B_B_over_J_zz" in dssf_h5
+            else "h_over_J_zz"
+        )
+        fields = dssf_h5[field_key][...]
         bond_weights = np.asarray([
             sum(
                 local_eio_weights(projections[eio], hoppings)
@@ -58,20 +71,57 @@ def compute(theory, overwrite=False):
             )
             for tto in range(3)
         ])
+        metadata = dict(dssf_h5.attrs)
         components = settings["components"]
+        transport_component = None
+        if theory == "spin-wave":
+            transport_component = metadata.get("transport_component", "both")
+            if isinstance(transport_component, bytes):
+                transport_component = transport_component.decode("utf-8")
+            if transport_component in ONE_MAGNON_MODE_COMPONENTS:
+                if transport_component not in dssf_h5:
+                    raise ValueError(
+                        f"The DSSF file lacks {transport_component!r}; rerun "
+                        "02_compute_tto_spin_wave_structure_factor.py with "
+                        "the band-resolved solver"
+                    )
+                components = components + (transport_component,)
         scattering = {
-            component: np.einsum(
-                "cmij,mij->cij", dssf_h5[component][...], bond_weights,
-                optimize=True,
-            )
+            # Read one condition at a time: the band-resolved gMFT scan can
+            # have hundreds of conditions and should not load the full DSSF.
+            component: np.asarray([
+                np.einsum("mij,mij->ij", dssf_h5[component][index],
+                          bond_weights, optimize=True)
+                for index in range(len(phi))
+            ])
             for component in components
         }
-        metadata = dict(dssf_h5.attrs)
+        if theory == "spin-wave":
+            scattering["total"] = combine_transport_components(
+                scattering["one_magnon"],
+                scattering["two_magnon"],
+                transport_component,
+                one_magnon_modes={
+                    component: scattering[component]
+                    for component in ONE_MAGNON_MODE_COMPONENTS
+                    if component in scattering
+                },
+            )
+            components = components + ("total",)
+            metadata["transport_component"] = transport_component
+            metadata["transport_total_definition"] = (
+                transport_component_definition(transport_component)
+            )
+            metadata["bragg_included_in_transport"] = False
 
     mode = "w" if overwrite else "x"
     with h5py.File(output_path, mode) as output:
         output.create_dataset("kf", data=kf)
         output.create_dataset("phi_degrees", data=phi)
+        for name, values in extra_coordinates.items():
+            output.create_dataset(name, data=values)
+        if theory == "spin-wave":
+            output.create_dataset("mu_B_B_over_J_zz", data=fields)
         output.create_dataset("h_over_J_zz", data=fields)
         output.create_dataset("eio_bond_weights", data=bond_weights)
         for component, values in scattering.items():
@@ -88,6 +138,8 @@ def compute(theory, overwrite=False):
         "ikprime": np.tile(np.arange(nk), len(phi) * nk),
         "t2": scattering["total"].ravel(),
     }
+    if theory == "spin-wave":
+        frame_data["mu_B_B_over_J_zz"] = np.repeat(fields, nk * nk)
     for component in components:
         if component != "total":
             frame_data[f"t2_{component}"] = scattering[component].ravel()
@@ -100,5 +152,6 @@ def compute(theory, overwrite=False):
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--theory", choices=tuple(THEORIES), default="spinon")
 parser.add_argument("--overwrite", action="store_true")
-args = parser.parse_args()
-compute(args.theory, overwrite=args.overwrite)
+if __name__ == "__main__":
+    args = parser.parse_args()
+    compute(args.theory, overwrite=args.overwrite)

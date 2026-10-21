@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from swt_bz_maps import COMPONENTS
 from plot_swt_high_symmetry_dssf import (
     HIGH_SYMMETRY_Q_REDUCED,
     coordinate_edges,
@@ -35,8 +36,10 @@ def test_reduced_points_match_standard_conventional_fcc_coordinates():
 
 def test_energy_axis_and_coordinate_edge_validation():
     one_magnon = energy_axis_from_bounds(0.4, 5, "one_magnon")
+    one_magnon_1 = energy_axis_from_bounds(0.4, 5, "one_magnon_1")
     two_magnon = energy_axis_from_bounds(0.4, 5, "two_magnon")
     assert np.allclose(one_magnon[[0, -1]], [0.0, 0.4])
+    assert np.allclose(one_magnon_1, one_magnon)
     assert np.allclose(two_magnon[[0, -1]], [0.0, 0.8])
     assert np.allclose(
         coordinate_edges([0.0, 1.0, 3.0]), [-0.5, 0.5, 2.0, 4.0]
@@ -50,3 +53,8 @@ def test_energy_axis_and_coordinate_edge_validation():
 def test_phi_file_labels_retain_the_actual_offset_angles():
     assert phi_file_label(0.1) == "0p1"
     assert phi_file_label(30.1) == "30p1"
+
+
+def test_every_energy_ordered_one_magnon_mode_is_selectable():
+    assert all(f"one_magnon_{mode}" in COMPONENTS for mode in range(1, 5))
+    assert "bragg" not in COMPONENTS

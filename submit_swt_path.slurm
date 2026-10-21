@@ -29,6 +29,10 @@ if ! declare -p FIELD_PHIS_DEGREES >/dev/null 2>&1; then
 fi
 J_PM_RATIO="${J_PM_RATIO:-0.205}"
 J_PMPM_RATIO="${J_PMPM_RATIO:-0.0}"
+G_Z="${G_Z:-10.0}"
+G_PERP="${G_PERP:-0.0}"
+DELTA1_PER_MEV="${DELTA1_PER_MEV:-0.7142857142857143}"
+DELTA2_PER_MEV="${DELTA2_PER_MEV:-0.7142857142857143}"
 J_ZZ_EV="${J_ZZ_EV:-0.00019}"
 COMPONENT="${COMPONENT:-one_magnon}"
 VMAX_PERCENTILE="${VMAX_PERCENTILE:-99}"
@@ -44,7 +48,7 @@ if ! [[ "$RUN_LABEL" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
     exit 2
 fi
 if [[ "${#FIELDS[@]}" -ne 3 ]]; then
-    echo "FIELDS must contain exactly three h/J_zz values." >&2
+    echo "FIELDS must contain exactly three mu_B |B| / J_zz values." >&2
     exit 2
 fi
 if [[ "${#FIELD_PHIS_DEGREES[@]}" -ne 2 ]]; then
@@ -52,7 +56,7 @@ if [[ "${#FIELD_PHIS_DEGREES[@]}" -ne 2 ]]; then
     exit 2
 fi
 case "$COMPONENT" in
-    total|bragg|one_magnon|two_magnon) ;;
+    total|one_magnon|one_magnon_[1-4]|two_magnon) ;;
     *)
         echo "Invalid COMPONENT: $COMPONENT" >&2
         exit 2
@@ -91,11 +95,15 @@ cp "$JOB_CONFIG" "$RUN_DIR/submitted_swt_path_job.conf"
     echo "run_label=$RUN_LABEL"
     echo "job_config=$JOB_CONFIG"
     echo "output=$RUN_DIR"
-    echo "h_over_Jzz=${FIELDS[*]}"
+    echo "mu_B_B_over_Jzz=${FIELDS[*]}"
     echo "field_theta_degrees=90"
     echo "field_phi_degrees=${FIELD_PHIS_DEGREES[*]}"
     echo "J_pm_over_Jzz=$J_PM_RATIO"
     echo "J_pmpm_over_Jzz=$J_PMPM_RATIO"
+    echo "g_z=$G_Z"
+    echo "g_perp=$G_PERP"
+    echo "delta1_per_mev=$DELTA1_PER_MEV"
+    echo "delta2_per_mev=$DELTA2_PER_MEV"
     echo "J_zz_ev=$J_ZZ_EV"
     echo "component=$COMPONENT"
     echo "vmax_percentile=$VMAX_PERCENTILE"
@@ -116,6 +124,10 @@ srun -n 1 -c "${SLURM_CPUS_PER_TASK:-1}" "$PYTHON_BIN" -u \
     --field-phis "${FIELD_PHIS_DEGREES[@]}" \
     --j-pm "$J_PM_RATIO" \
     --j-pmpm "$J_PMPM_RATIO" \
+    --g-z "$G_Z" \
+    --g-perp "$G_PERP" \
+    --delta1-per-mev "$DELTA1_PER_MEV" \
+    --delta2-per-mev "$DELTA2_PER_MEV" \
     --j-zz-ev "$J_ZZ_EV" \
     --component "$COMPONENT" \
     --vmax-percentile "$VMAX_PERCENTILE" \

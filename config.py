@@ -63,7 +63,16 @@ ENERGY_BROADENING = 0.01
 TTO_J_ZZ_EV = 0.17e-3
 TTO_J_PM_RATIO = 0.20
 TTO_J_PMPM_RATIO = 0.0
+# Eq. (1) of papers/EIO_TTO.pdf uses mu_B |B| as the bare field energy.  The
+# note gives g_z approximately 10 and only the bound g_perp < 1.  Its stated
+# delta scale is approximately (1.4 meV)^-1; signs and precise values remain
+# configurable because the note does not specify them.
+TTO_G_Z = 10.0
+TTO_G_PERP = 0.0
+TTO_DELTA1_PER_MEV = 1.0 / 1.4
+TTO_DELTA2_PER_MEV = 1.0 / 1.4
 # Default field and angle grid for the independent high-field spin-wave scan.
+# Every value is mu_B |B| / J_zz, before applying g_z, g_perp, or delta_i.
 TTO_FIELD_RATIOS = (0.01, 0.15, 0.20, 0.25)
 TTO_DSSF_NK = 8
 TTO_Q_PERP_MODE = "slice"

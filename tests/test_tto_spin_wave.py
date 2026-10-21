@@ -1,15 +1,22 @@
 import numpy as np
+import pytest
 
 from tto_spin_wave import (
     GAMMA,
+    ONE_MAGNON_MODE_COMPONENTS,
     classical_energy_and_gradient,
     classical_tangent_hessian,
     exchange_matrix,
+    local_magnetic_field,
     local_zeeman_components,
+    local_zeeman_field,
     magnon_dispersion_bounds,
     magnon_modes,
+    one_magnon_mode_index,
+    quantization_rotations,
     relax_ordered_state,
     spin_wave_static_structure_factor,
+    spin_wave_matrix,
     spin_wave_structure_factor,
     spin_wave_structure_factor_spectrum,
     zeeman_minimizing_spins,
@@ -35,6 +42,78 @@ def test_generated_in_plane_field_matches_previous_geometry():
         2.0 * np.sqrt(2.0) / 3.0,
     ])
     assert np.allclose(h_z, expected, atol=1e-14)
+
+
+def test_full_local_field_implements_every_eq_1_field_term():
+    field = 0.37
+    g_z = 9.7
+    g_perp = 0.42
+    delta1_j_zz = -0.13
+    delta2_j_zz = 0.08
+    bare = local_magnetic_field(
+        field, theta_degrees=73.0, phi_degrees=21.0
+    )
+    full = local_zeeman_field(
+        field,
+        theta_degrees=73.0,
+        phi_degrees=21.0,
+        g_z=g_z,
+        g_perp=g_perp,
+        delta1_j_zz=delta1_j_zz,
+        delta2_j_zz=delta2_j_zz,
+    )
+    h_x, h_y, h_z = bare.T
+    expected = np.column_stack((
+        g_perp * h_x
+        + delta1_j_zz * h_x * h_z
+        + delta2_j_zz * (h_y ** 2 - h_x ** 2),
+        g_perp * h_y
+        + delta1_j_zz * h_y * h_z
+        + 2.0 * delta2_j_zz * h_x * h_y,
+        g_z * h_z,
+    ))
+    assert full.shape == (4, 3)
+    assert np.allclose(full, expected)
+    assert np.allclose(np.linalg.norm(bare, axis=1), field)
+
+
+def test_full_field_zeeman_seed_is_parallel_to_each_local_field():
+    h_local = local_zeeman_field(
+        0.2, phi_degrees=15.0, g_z=10.0, g_perp=0.8,
+        delta1_j_zz=0.12, delta2_j_zz=0.09,
+    )
+    spins = zeeman_minimizing_spins(h_local, spin_length=0.5)
+    assert np.allclose(np.linalg.norm(spins, axis=1), 0.5)
+    assert np.allclose(
+        np.einsum("ma,ma->m", h_local, spins),
+        0.5 * np.linalg.norm(h_local, axis=1),
+    )
+
+
+def test_transverse_field_enters_quadratic_magnon_number_term():
+    h_local = local_zeeman_field(
+        0.4, theta_degrees=82.0, phi_degrees=19.0,
+        g_z=10.0, g_perp=0.8,
+        delta1_j_zz=0.12, delta2_j_zz=0.09,
+    )
+    ordered_state = 2.0 * _polarized_test_state()
+    full_matrix = spin_wave_matrix(
+        np.asarray([0.13, 0.21, -0.08]), ordered_state, h_local, 0.2
+    )
+    ising_matrix = spin_wave_matrix(
+        np.asarray([0.13, 0.21, -0.08]), ordered_state,
+        h_local[:, 2], 0.2,
+    )
+    rotations = quantization_rotations(ordered_state)
+    expected_shift = np.einsum(
+        "ma,ma->m",
+        np.column_stack((h_local[:, :2], np.zeros(4))),
+        rotations[:, 2, :],
+    )
+    difference = full_matrix - ising_matrix
+    assert np.allclose(np.diag(difference)[:4], expected_shift)
+    assert np.allclose(np.diag(difference)[4:], expected_shift)
+    assert np.allclose(difference - np.diag(np.diag(difference)), 0.0)
 
 
 def test_zeeman_seed_has_fixed_length_and_minimal_energy():
@@ -88,7 +167,11 @@ def test_stationarity_refinement_preserves_high_field_goldstone_mode():
 
 def test_classical_analytic_gradient():
     parameters = np.asarray([0.7, 1.1, 1.7, 2.2, -0.4, 0.2, 1.0, -1.3])
-    h_z = np.asarray([0.0, -0.1, -0.1, 0.2])
+    h_z = local_zeeman_field(
+        0.3, theta_degrees=81.0, phi_degrees=13.0,
+        g_z=10.0, g_perp=0.7,
+        delta1_j_zz=0.12, delta2_j_zz=0.09,
+    )
     _, analytic = classical_energy_and_gradient(
         parameters, h_z, 0.2, j_pmpm_ratio=0.035
     )
@@ -181,7 +264,12 @@ def test_spin_wave_dssf_components_sum():
     assert np.all(result["total"] >= 0.0)
     assert np.allclose(
         result["total"],
-        result["one_magnon"] + result["two_magnon"] + result["bragg"],
+        result["one_magnon"] + result["two_magnon"],
+    )
+    assert "bragg" not in result
+    assert np.allclose(
+        result["one_magnon"],
+        sum(result[component] for component in ONE_MAGNON_MODE_COMPONENTS),
     )
 
 
@@ -208,11 +296,51 @@ def test_spin_wave_dssf_spectrum_reuses_a_shared_energy_axis():
         )
         assert np.allclose(spectrum["total"][:, energy_index], fixed["total"])
 
+    one_magnon = spin_wave_structure_factor_spectrum(
+        q, omega, relaxed["unit_vectors_local"], h_z, 0.2,
+        j_pmpm_ratio=0.03, j_zz_ev=1.7e-4, eta_ev=2e-5, nk=2,
+        interface_sublattices=(0, 1, 2, 3), component="one_magnon",
+    )["one_magnon"]
+    two_magnon = spin_wave_structure_factor_spectrum(
+        q, omega, relaxed["unit_vectors_local"], h_z, 0.2,
+        j_pmpm_ratio=0.03, j_zz_ev=1.7e-4, eta_ev=2e-5, nk=2,
+        interface_sublattices=(0, 1, 2, 3), component="two_magnon",
+    )["two_magnon"]
+    assert np.allclose(spectrum["total"], one_magnon + two_magnon)
+    mode_sum = sum(
+        spin_wave_structure_factor_spectrum(
+            q, omega, relaxed["unit_vectors_local"], h_z, 0.2,
+            j_pmpm_ratio=0.03, j_zz_ev=1.7e-4, eta_ev=2e-5, nk=2,
+            interface_sublattices=(0, 1, 2, 3), component=component,
+        )[component]
+        for component in ONE_MAGNON_MODE_COMPONENTS
+    )
+    assert np.allclose(one_magnon, mode_sum)
+    assert one_magnon_mode_index("one_magnon_1") == 0
+    assert one_magnon_mode_index("one_magnon_4") == 3
+    with pytest.raises(ValueError, match="Unknown spin-wave DSSF component"):
+        spin_wave_structure_factor_spectrum(
+            q, omega, relaxed["unit_vectors_local"], h_z, 0.2,
+            j_pmpm_ratio=0.03, j_zz_ev=1.7e-4, eta_ev=2e-5,
+            component="bragg",
+        )
+
     bounds = magnon_dispersion_bounds(
         q, relaxed["unit_vectors_local"], h_z, 0.2,
         j_pmpm_ratio=0.03, j_zz_ev=1.7e-4,
     )
     assert 0.0 <= bounds["minimum_ev"] <= bounds["maximum_ev"]
+    lowest_bounds = magnon_dispersion_bounds(
+        q, relaxed["unit_vectors_local"], h_z, 0.2,
+        j_pmpm_ratio=0.03, j_zz_ev=1.7e-4, mode_index=0,
+    )
+    highest_bounds = magnon_dispersion_bounds(
+        q, relaxed["unit_vectors_local"], h_z, 0.2,
+        j_pmpm_ratio=0.03, j_zz_ev=1.7e-4, mode_index=3,
+    )
+    assert lowest_bounds["minimum_ev"] >= bounds["minimum_ev"]
+    assert highest_bounds["maximum_ev"] <= bounds["maximum_ev"]
+    assert lowest_bounds["maximum_ev"] <= highest_bounds["maximum_ev"]
 
 
 def test_static_spin_wave_structure_factor_components_sum():
@@ -230,7 +358,10 @@ def test_static_spin_wave_structure_factor_components_sum():
     assert np.all(result["total"] >= 0.0)
     assert np.allclose(
         result["total"],
-        result["one_magnon"] + result["two_magnon"] + result["bragg"],
+        result["one_magnon"] + result["two_magnon"],
     )
-    assert np.allclose(result["bragg"][:, 0], 0.0)
-    assert np.all(result["bragg"][:, 1] > 0.0)
+    assert np.allclose(
+        result["one_magnon"],
+        sum(result[component] for component in ONE_MAGNON_MODE_COMPONENTS),
+    )
+    assert "bragg" not in result

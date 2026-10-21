@@ -1,30 +1,25 @@
 #!/bin/bash
-
+# Snapshot the editable SWT configuration at submission, including while queued.
 set -euo pipefail
-
-PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-SOURCE_CONFIG="${JOB_CONFIG:-$PROJECT_ROOT/spin_wave_job.conf}"
-SNAPSHOT_DIR="$PROJECT_ROOT/slurm_config_snapshots"
-
-if [[ ! -f "$SOURCE_CONFIG" ]]; then
-    echo "Job configuration does not exist: $SOURCE_CONFIG" >&2
+cd "$(dirname "$0")"
+config="${1:-swt_transport_job.json}"
+if [[ ! -r "$config" ]]; then
+    echo "Configuration file missing or unreadable: $config" >&2
     exit 1
 fi
 if ! command -v sbatch >/dev/null 2>&1; then
     echo "sbatch is not available in this environment." >&2
     exit 1
 fi
-
-mkdir -p "$SNAPSHOT_DIR"
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-CONFIG_SNAPSHOT=$(mktemp "$SNAPSHOT_DIR/spin_wave_job_${TIMESTAMP}_XXXXXX.conf")
-cp "$SOURCE_CONFIG" "$CONFIG_SNAPSHOT"
-
-if ! sbatch \
-    --export=ALL,JOB_CONFIG="$CONFIG_SNAPSHOT" \
-    "$PROJECT_ROOT/submit_swt.slurm" "$@"; then
-    rm -f "$CONFIG_SNAPSHOT"
-    exit 1
-fi
-
-echo "Configuration snapshot: $CONFIG_SNAPSHOT"
+run_directory=$(python3 -c \
+    'import json, sys; from swt_transport_job import configured_output_directories; print(configured_output_directories(json.load(open(sys.argv[1])))[0])' \
+    "$config")
+mkdir -p "$run_directory"
+snapshot=$(mktemp "$run_directory/submitted_config_XXXXXXXX.json")
+cp "$config" "$snapshot"
+config_payload=$(base64 < "$snapshot" | tr -d '\n')
+sbatch \
+    --output="$run_directory/swt_transport_%j.out" \
+    --error="$run_directory/swt_transport_%j.err" \
+    --export="ALL,JOB_CONFIG=$snapshot,SWT_CONFIG_BASE64=$config_payload" \
+    submit_swt.slurm

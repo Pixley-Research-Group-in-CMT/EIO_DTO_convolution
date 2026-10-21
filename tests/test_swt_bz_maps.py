@@ -61,3 +61,20 @@ def test_map_cli_exposes_slice_and_integrated_q_perp_modes():
     assert defaults.n_q_perp == 8
     assert integrated.q_perp_mode == "integrated"
     assert integrated.n_q_perp == 12
+
+
+def test_map_cli_exposes_eq_1_field_constants():
+    parser = build_parser("static", "test")
+    defaults = parser.parse_args([])
+    selected = parser.parse_args([
+        "--g-z", "9.8", "--g-perp", "0.7",
+        "--delta1-per-mev", "-0.6", "--delta2-per-mev", "0.5",
+    ])
+    assert defaults.g_z == 10.0
+    assert defaults.g_perp == 0.0
+    assert np.isclose(defaults.delta1_per_mev, 1.0 / 1.4)
+    assert np.isclose(defaults.delta2_per_mev, 1.0 / 1.4)
+    assert selected.g_z == 9.8
+    assert selected.g_perp == 0.7
+    assert selected.delta1_per_mev == -0.6
+    assert selected.delta2_per_mev == 0.5

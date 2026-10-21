@@ -24,6 +24,7 @@ from swt_bz_maps import (
 )
 from tto_spin_wave import (
     magnon_dispersion_bounds,
+    one_magnon_mode_index,
     spin_wave_structure_factor_spectrum,
 )
 
@@ -110,7 +111,7 @@ def write_video(
                 axis.set_xlabel(r"$q_{[\bar{1}01]}$ ($\mathrm{\AA}^{-1}$)")
             if sublattice_index == 0:
                 axis.set_ylabel(
-                    rf"$h/J_{{zz}}={field_ratio:g}$" + "\n"
+                    rf"$\mu_B|B|/J_{{zz}}={field_ratio:g}$" + "\n"
                     + r"$q_{[1\bar{2}1]}$ ($\mathrm{\AA}^{-1}$)"
                 )
             row.append(mesh)
@@ -122,6 +123,9 @@ def write_video(
         rf"$J_{{zz}}={1e3 * args.j_zz_ev:g}$ meV, "
         rf"$J_{{\pm}}/J_{{zz}}={args.j_pm:g}$, "
         rf"$J_{{\pm\pm}}/J_{{zz}}={args.j_pmpm:g}$, "
+        rf"$g_z={args.g_z:g}$, $g_\perp={args.g_perp:g}$, "
+        rf"$\delta_1={args.delta1_per_mev:g}$ meV$^{{-1}}$, "
+        rf"$\delta_2={args.delta2_per_mev:g}$ meV$^{{-1}}$, "
         rf"component={args.component.replace('_', ' ')}"
     )
     title = figure.suptitle("", fontsize=10)
@@ -181,6 +185,7 @@ def write_hdf5(
         output.create_dataset("inside_2d_bz", data=inside_bz, compression="gzip")
         output.create_dataset("omega_mev", data=omega_mev)
         output.create_dataset("field_phi_degrees", data=FIELD_PHIS_DEGREES)
+        output.create_dataset("mu_B_B_over_J_zz", data=FIELD_RATIOS)
         output.create_dataset("h_over_J_zz", data=FIELD_RATIOS)
         output.create_dataset("sublattice_indices", data=SUBLATTICES)
         output.create_dataset(
@@ -205,12 +210,17 @@ def write_hdf5(
             first_bz="hexagonal 2D BZ perpendicular to cubic [111]",
             momentum_axes="x || [-1,0,1], y || [1,-2,1], in inverse Angstrom",
             array_axes=(
-                "field_phi, h_over_J_zz, sublattice, omega, q_y, q_x"
+                "field_phi, mu_B_B_over_J_zz, sublattice, omega, q_y, q_x"
             ),
             field_theta_degrees=FIELD_THETA_DEGREES,
             J_zz_ev=args.j_zz_ev,
             J_pm_over_J_zz=args.j_pm,
             J_pmpm_over_J_zz=args.j_pmpm,
+            field_energy_definition="mu_B |B|",
+            g_z=args.g_z,
+            g_perp=args.g_perp,
+            delta1_per_mev=args.delta1_per_mev,
+            delta2_per_mev=args.delta2_per_mev,
             lorentzian_eta_mev=args.eta_mev,
             tto_cubic_lattice_angstrom=args.lattice_constant,
             dssf_nk=args.dssf_nk,
@@ -264,7 +274,8 @@ def compute_and_animate(args):
     dispersion_bounds_mev = np.empty(scan_shape + (2,))
     max_imaginary_frequency_ratio = np.zeros(scan_shape)
     state_data = {
-        "h_z_over_J_zz": np.empty(scan_shape + (4,)),
+        "bare_field_local_over_J_zz": np.empty(scan_shape + (4, 3)),
+        "effective_field_local_over_J_zz": np.empty(scan_shape + (4, 3)),
         "initial_spins_local": np.empty(scan_shape + (4, 3)),
         "ordered_spins_local": np.empty(scan_shape + (4, 3)),
         "initial_classical_energy": np.empty(scan_shape),
@@ -279,7 +290,8 @@ def compute_and_animate(args):
             condition = (phi_index, field_index)
             print(
                 "Preparing dispersion for "
-                f"phi={field_phi_degrees:g} deg, h/Jzz={field_ratio:g}",
+                "phi="
+                f"{field_phi_degrees:g} deg, mu_B|B|/Jzz={field_ratio:g}",
                 flush=True,
             )
             h_z, initial_spins, relaxed = prepare_ordered_state(
@@ -294,6 +306,7 @@ def compute_and_animate(args):
                 j_zz_ev=args.j_zz_ev,
                 spin_length=args.spin_length,
                 regularization=args.regularization,
+                mode_index=one_magnon_mode_index(args.component),
             )
             states[condition] = (h_z, relaxed)
             dispersion_bounds_mev[condition] = 1e3 * np.asarray([
@@ -302,7 +315,10 @@ def compute_and_animate(args):
             max_imaginary_frequency_ratio[condition] = (
                 bounds["max_imaginary_frequency_ratio"]
             )
-            state_data["h_z_over_J_zz"][condition] = h_z
+            state_data["bare_field_local_over_J_zz"][condition] = (
+                relaxed["bare_field_local_over_J_zz"]
+            )
+            state_data["effective_field_local_over_J_zz"][condition] = h_z
             state_data["initial_spins_local"][condition] = initial_spins
             state_data["ordered_spins_local"][condition] = relaxed["spins_local"]
             state_data["initial_classical_energy"][condition] = relaxed["initial_energy"]
@@ -333,7 +349,8 @@ def compute_and_animate(args):
             h_z, relaxed = states[condition]
             print(
                 "Evaluating DSSF spectrum for "
-                f"phi={field_phi_degrees:g} deg, h/Jzz={field_ratio:g}",
+                "phi="
+                f"{field_phi_degrees:g} deg, mu_B|B|/Jzz={field_ratio:g}",
                 flush=True,
             )
             result = spin_wave_structure_factor_spectrum(
@@ -396,6 +413,10 @@ def build_parser():
     parser.add_argument("--output-root", type=Path, default=Path.cwd())
     parser.add_argument("--j-pm", type=float, default=0.205)
     parser.add_argument("--j-pmpm", type=float, default=0.0)
+    parser.add_argument("--g-z", type=float, default=10.0)
+    parser.add_argument("--g-perp", type=float, default=0.0)
+    parser.add_argument("--delta1-per-mev", type=float, default=1.0 / 1.4)
+    parser.add_argument("--delta2-per-mev", type=float, default=1.0 / 1.4)
     parser.add_argument("--j-zz-ev", type=float, default=0.00019)
     parser.add_argument("--component", choices=COMPONENTS, default="one_magnon")
     parser.add_argument("--vmax-percentile", type=float, default=95.0)

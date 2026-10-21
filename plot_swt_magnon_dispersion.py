@@ -114,7 +114,7 @@ def plot_band_grid(
                 axis.set_xlabel(r"$q_{[\bar{1}01]}$ ($\mathrm{\AA}^{-1}$)")
             if band_index == 0:
                 axis.set_ylabel(
-                    rf"$h/J_{{zz}}={field_ratio:g}$" + "\n"
+                    rf"$\mu_B|B|/J_{{zz}}={field_ratio:g}$" + "\n"
                     + r"$q_{[1\bar{2}1]}$ ($\mathrm{\AA}^{-1}$)"
                 )
 
@@ -123,7 +123,10 @@ def plot_band_grid(
         rf"$\phi={field_phi_degrees:g}^\circ$, "
         rf"$J_{{zz}}={1e3 * args.j_zz_ev:g}$ meV, "
         rf"$J_{{\pm}}/J_{{zz}}={args.j_pm:g}$, "
-        rf"$J_{{\pm\pm}}/J_{{zz}}={args.j_pmpm:g}$"
+        rf"$J_{{\pm\pm}}/J_{{zz}}={args.j_pmpm:g}$, "
+        rf"$g_z={args.g_z:g}$, $g_\perp={args.g_perp:g}$, "
+        rf"$\delta_1={args.delta1_per_mev:g}$ meV$^{{-1}}$, "
+        rf"$\delta_2={args.delta2_per_mev:g}$ meV$^{{-1}}$"
     )
     figure.suptitle(
         r"Magnon dispersion $\omega_n(\mathbf{q})$" + "\n" + parameters,
@@ -160,6 +163,7 @@ def write_hdf5(
         output.create_dataset("q_reduced", data=q_grid, compression="gzip")
         output.create_dataset("inside_2d_bz", data=inside_bz, compression="gzip")
         output.create_dataset("field_phi_degrees", data=FIELD_PHIS_DEGREES)
+        output.create_dataset("mu_B_B_over_J_zz", data=FIELD_RATIOS)
         output.create_dataset("h_over_J_zz", data=FIELD_RATIOS)
         output.create_dataset(
             "band_indices", data=np.arange(1, N_MAGNON_BANDS + 1)
@@ -178,7 +182,7 @@ def write_hdf5(
             observable="four positive magnon energies",
             first_bz="hexagonal 2D BZ perpendicular to cubic [111]",
             momentum_axes="x || [-1,0,1], y || [1,-2,1], in inverse Angstrom",
-            array_axes="field_phi, h_over_J_zz, band, q_y, q_x",
+            array_axes="field_phi, mu_B_B_over_J_zz, band, q_y, q_x",
             band_ordering=(
                 "ascending energy independently at each q; crossings are not "
                 "tracked by eigenvector continuity"
@@ -187,6 +191,11 @@ def write_hdf5(
             J_zz_ev=args.j_zz_ev,
             J_pm_over_J_zz=args.j_pm,
             J_pmpm_over_J_zz=args.j_pmpm,
+            field_energy_definition="mu_B |B|",
+            g_z=args.g_z,
+            g_perp=args.g_perp,
+            delta1_per_mev=args.delta1_per_mev,
+            delta2_per_mev=args.delta2_per_mev,
             tto_cubic_lattice_angstrom=args.lattice_constant,
             spin_length=args.spin_length,
             regularization=args.regularization,
@@ -228,7 +237,8 @@ def compute_and_plot(args):
     )
     max_imaginary_frequency_ratio = np.empty(scan_shape)
     state_data = {
-        "h_z_over_J_zz": np.empty(scan_shape + (4,)),
+        "bare_field_local_over_J_zz": np.empty(scan_shape + (4, 3)),
+        "effective_field_local_over_J_zz": np.empty(scan_shape + (4, 3)),
         "initial_spins_local": np.empty(scan_shape + (4, 3)),
         "ordered_spins_local": np.empty(scan_shape + (4, 3)),
         "initial_classical_energy": np.empty(scan_shape),
@@ -243,7 +253,8 @@ def compute_and_plot(args):
             condition = (phi_index, field_index)
             print(
                 "Preparing magnon bands for "
-                f"phi={field_phi_degrees:g} deg, h/Jzz={field_ratio:g}",
+                "phi="
+                f"{field_phi_degrees:g} deg, mu_B|B|/Jzz={field_ratio:g}",
                 flush=True,
             )
             h_z, initial_spins, relaxed = prepare_ordered_state(
@@ -261,7 +272,10 @@ def compute_and_plot(args):
             )
             band_energy_mev[condition][:, inside_bz] = energies
             max_imaginary_frequency_ratio[condition] = max_imaginary
-            state_data["h_z_over_J_zz"][condition] = h_z
+            state_data["bare_field_local_over_J_zz"][condition] = (
+                relaxed["bare_field_local_over_J_zz"]
+            )
+            state_data["effective_field_local_over_J_zz"][condition] = h_z
             state_data["initial_spins_local"][condition] = initial_spins
             state_data["ordered_spins_local"][condition] = relaxed["spins_local"]
             state_data["initial_classical_energy"][condition] = (
@@ -312,6 +326,10 @@ def build_parser():
     parser.add_argument("--output-root", type=Path, default=Path.cwd())
     parser.add_argument("--j-pm", type=float, default=0.205)
     parser.add_argument("--j-pmpm", type=float, default=0.0)
+    parser.add_argument("--g-z", type=float, default=10.0)
+    parser.add_argument("--g-perp", type=float, default=0.0)
+    parser.add_argument("--delta1-per-mev", type=float, default=1.0 / 1.4)
+    parser.add_argument("--delta2-per-mev", type=float, default=1.0 / 1.4)
     parser.add_argument("--j-zz-ev", type=float, default=0.00019)
     parser.add_argument("--n-q", type=int, default=101)
     parser.add_argument(

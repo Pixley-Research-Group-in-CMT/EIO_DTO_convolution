@@ -23,6 +23,10 @@ source "$JOB_CONFIG"
 RUN_LABEL="${RUN_LABEL:-dssf}"
 J_PM_RATIO="${J_PM_RATIO:-0.205}"
 J_PMPM_RATIO="${J_PMPM_RATIO:-0.0}"
+G_Z="${G_Z:-10.0}"
+G_PERP="${G_PERP:-0.0}"
+DELTA1_PER_MEV="${DELTA1_PER_MEV:-0.7142857142857143}"
+DELTA2_PER_MEV="${DELTA2_PER_MEV:-0.7142857142857143}"
 J_ZZ_EV="${J_ZZ_EV:-0.00019}"
 COMPONENT="${COMPONENT:-one_magnon}"
 VMAX_PERCENTILE="${VMAX_PERCENTILE:-95}"
@@ -72,11 +76,15 @@ cp "$JOB_CONFIG" "$RUN_DIR/submitted_swt_dssf_job.conf"
     echo "run_label=$RUN_LABEL"
     echo "job_config=$JOB_CONFIG"
     echo "output=$RUN_DIR"
-    echo "h_over_Jzz=0.25 0.45 1.5"
+    echo "mu_B_B_over_Jzz=0.25 0.45 1.5"
     echo "field_theta_degrees=90"
     echo "field_phi_degrees=0.1 30.1"
     echo "J_pm_over_Jzz=$J_PM_RATIO"
     echo "J_pmpm_over_Jzz=$J_PMPM_RATIO"
+    echo "g_z=$G_Z"
+    echo "g_perp=$G_PERP"
+    echo "delta1_per_mev=$DELTA1_PER_MEV"
+    echo "delta2_per_mev=$DELTA2_PER_MEV"
     echo "J_zz_ev=$J_ZZ_EV"
     echo "component=$COMPONENT"
     echo "vmax_percentile=$VMAX_PERCENTILE"
@@ -96,6 +104,10 @@ srun -n 1 -c "${SLURM_CPUS_PER_TASK:-1}" "$PYTHON_BIN" -u \
     --output-root "$RUN_DIR" \
     --j-pm "$J_PM_RATIO" \
     --j-pmpm "$J_PMPM_RATIO" \
+    --g-z "$G_Z" \
+    --g-perp "$G_PERP" \
+    --delta1-per-mev "$DELTA1_PER_MEV" \
+    --delta2-per-mev "$DELTA2_PER_MEV" \
     --j-zz-ev "$J_ZZ_EV" \
     --component "$COMPONENT" \
     --vmax-percentile "$VMAX_PERCENTILE" \

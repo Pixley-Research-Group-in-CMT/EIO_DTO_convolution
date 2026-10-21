@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Plot a downloaded three-field SWT run as heatmap rows and polar panels."""
 import argparse
+import json
 from pathlib import Path
 
 import h5py
@@ -9,9 +10,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from swt_transport_job import configured_output_directories
+
 
 # Edit this path to the downloaded run directory, data directory, or CSV file.
-DOWNLOADED_RESULTS = Path("~/Desktop/research/SWT_transport/run_251")
+DOWNLOADED_RESULTS = Path("~/Desktop/research/SWT_transport_int/run_02")
 
 TRANSPORT_NAME = "tto_spin_wave_transport_summary.csv"
 METADATA_NAME = "tto_spin_wave_scattering.hdf5"
@@ -99,7 +102,10 @@ def validate_three_field_grid(data):
             data.loc[np.isclose(data["h_over_J_zz"], field), "phi_degrees"].unique()
         )
         if not np.array_equal(selected, angles):
-            raise ValueError(f"Field h/J_zz={field:g} does not have the full angle grid")
+            raise ValueError(
+                "Field mu_B |B| / J_zz="
+                f"{field:g} does not have the full angle grid"
+            )
     return fields, angles
 
 
@@ -151,10 +157,17 @@ def parameter_label(metadata_path):
         j_zz_mev = 1e3 * float(metadata.attrs["J_zz_ev"])
         j_pm = float(metadata.attrs["J_pm_over_J_zz"])
         j_pmpm = float(metadata.attrs.get("J_pmpm_over_J_zz", 0.0))
+        g_z = float(metadata.attrs.get("g_z", 1.0))
+        g_perp = float(metadata.attrs.get("g_perp", 0.0))
+        delta1_per_mev = float(metadata.attrs.get("delta1_per_mev", 0.0))
+        delta2_per_mev = float(metadata.attrs.get("delta2_per_mev", 0.0))
     return (
         rf"$J_{{zz}}={j_zz_mev:g}\,\mathrm{{meV}},\ "
         rf"J_{{\pm}}/J_{{zz}}={j_pm:g},\ "
-        rf"J_{{\pm\pm}}/J_{{zz}}={j_pmpm:g}$"
+        rf"J_{{\pm\pm}}/J_{{zz}}={j_pmpm:g},\ "
+        rf"g_z={g_z:g}$, $g_\perp={g_perp:g}$, "
+        rf"$\delta_1={delta1_per_mev:g}$ meV$^{{-1}}$, "
+        rf"$\delta_2={delta2_per_mev:g}$ meV$^{{-1}}$"
     )
 
 
@@ -176,7 +189,7 @@ def plot_heatmap_rows(data, fields, angles, title, output):
             if index == 1 else ""
         )
         axis.set_ylabel(
-            rf"$h/J_{{zz}}={field:g}$" + suffix,
+            rf"$\mu_B|B|/J_{{zz}}={field:g}$" + suffix,
             rotation=0, ha="right", va="center", labelpad=10,
         )
         axis.set_yticks([])
@@ -238,7 +251,7 @@ def plot_polar_panels(data, fields, title, output):
             if index == 1 else ""
         )
         axis.set_title(
-            rf"$h/J_{{zz}}={field:g}$" + suffix,
+            rf"$\mu_B|B|/J_{{zz}}={field:g}$" + suffix,
             fontsize=9,
             y=1.18,
             pad=0,
@@ -262,6 +275,10 @@ def main():
         "results", nargs="?", type=Path, default=DOWNLOADED_RESULTS,
         help="run directory, data directory, or transport-summary CSV",
     )
+    parser.add_argument(
+        "--output-directory", type=Path,
+        help="override the plot_root saved in the run manifest",
+    )
     args = parser.parse_args()
     try:
         run_directory, data_directory = resolve_run_directory(args.results)
@@ -272,11 +289,23 @@ def main():
     except ValueError as error:
         parser.error(str(error))
 
-    figures = run_directory / "figures"
-    figures.mkdir(parents=True, exist_ok=True)
+    manifest_path = run_directory / "manifest.json"
+    if manifest_path.is_file():
+        config = json.loads(manifest_path.read_text())["config"]
+        plot_directory = (
+            args.output_directory
+            if args.output_directory is not None
+            else configured_output_directories(config)[1]
+        )
+        prefix = str(config["run_label"]).strip() + "_"
+    else:
+        plot_directory = args.output_directory or run_directory
+        prefix = ""
+    plot_directory = plot_directory.expanduser().resolve()
+    plot_directory.mkdir(parents=True, exist_ok=True)
     title = parameter_label(data_directory / METADATA_NAME)
-    heatmap = figures / HEATMAP_NAME
-    polar = figures / POLAR_NAME
+    heatmap = plot_directory / (prefix + HEATMAP_NAME)
+    polar = plot_directory / (prefix + POLAR_NAME)
     plot_heatmap_rows(data, fields, angles, title, heatmap)
     plot_polar_panels(data, fields, title, polar)
     print(f"Heatmap: {heatmap}")

@@ -17,6 +17,7 @@ from swt_bz_maps import (
 )
 from tto_spin_wave import (
     magnon_dispersion_bounds,
+    one_magnon_mode_index,
     spin_wave_structure_factor_spectrum,
 )
 from tto_structure_factor import FCC_PRIMITIVES
@@ -147,7 +148,8 @@ def plot_sublattice_spectra(
                 axis.set_title(rf"$\mu={mu}$")
             if mu_index == 0:
                 axis.set_ylabel(
-                    rf"$h/J_{{zz}}={field_ratio:g}$" + "\n" + r"$\omega$ (meV)"
+                    rf"$\mu_B|B|/J_{{zz}}={field_ratio:g}$"
+                    + "\n" + r"$\omega$ (meV)"
                 )
             if field_index == len(fields) - 1:
                 axis.set_xlabel("wave-vector path")
@@ -158,6 +160,9 @@ def plot_sublattice_spectra(
         rf"$J_{{zz}}={1e3 * args.j_zz_ev:g}$ meV, "
         rf"$J_{{\pm}}/J_{{zz}}={args.j_pm:g}$, "
         rf"$J_{{\pm\pm}}/J_{{zz}}={args.j_pmpm:g}$, "
+        rf"$g_z={args.g_z:g}$, $g_\perp={args.g_perp:g}$, "
+        rf"$\delta_1={args.delta1_per_mev:g}$ meV$^{{-1}}$, "
+        rf"$\delta_2={args.delta2_per_mev:g}$ meV$^{{-1}}$, "
         rf"component={args.component.replace('_', ' ')}"
     )
     figure.suptitle(r"$S_\mu(\mathbf{q},\omega)$" + "\n" + parameters, fontsize=10)
@@ -203,7 +208,8 @@ def plot_sublattice_sum(
         _decorate_path_axis(axis, tick_positions, field_index == len(fields) - 1)
         axis.set_ylim(omega_mev[0], omega_mev[-1])
         axis.set_ylabel(
-            rf"$h/J_{{zz}}={field_ratio:g}$" + "\n" + r"$\omega$ (meV)"
+            rf"$\mu_B|B|/J_{{zz}}={field_ratio:g}$"
+            + "\n" + r"$\omega$ (meV)"
         )
     axes[-1].set_xlabel("wave-vector path")
 
@@ -213,6 +219,9 @@ def plot_sublattice_sum(
         rf"$J_{{zz}}={1e3 * args.j_zz_ev:g}$ meV, "
         rf"$J_{{\pm}}/J_{{zz}}={args.j_pm:g}$, "
         rf"$J_{{\pm\pm}}/J_{{zz}}={args.j_pmpm:g}$, "
+        rf"$g_z={args.g_z:g}$, $g_\perp={args.g_perp:g}$, "
+        rf"$\delta_1={args.delta1_per_mev:g}$ meV$^{{-1}}$, "
+        rf"$\delta_2={args.delta2_per_mev:g}$ meV$^{{-1}}$, "
         rf"component={args.component.replace('_', ' ')}"
     )
     figure.suptitle(
@@ -254,6 +263,7 @@ def write_hdf5(
         )
         output.create_dataset("omega_mev", data=omega_mev)
         output.create_dataset("field_phi_degrees", data=field_phis)
+        output.create_dataset("mu_B_B_over_J_zz", data=fields)
         output.create_dataset("h_over_J_zz", data=fields)
         output.create_dataset("sublattice_indices", data=SUBLATTICES)
         output.create_dataset("dispersion_minimum_mev", data=dispersion_bounds_mev[..., 0])
@@ -276,14 +286,21 @@ def write_hdf5(
             component=args.component,
             momentum_path="Gamma-X-W-K-Gamma-L-U in the bulk FCC BZ",
             array_axes=(
-                "field_phi_degrees, h_over_J_zz, sublattice, omega, q_path"
+                "field_phi_degrees, mu_B_B_over_J_zz, sublattice, omega, q_path"
             ),
-            mu_sum_axes="field_phi_degrees, h_over_J_zz, omega, q_path",
+            mu_sum_axes=(
+                "field_phi_degrees, mu_B_B_over_J_zz, omega, q_path"
+            ),
             mu_sum_definition="sum over sublattice indices 1, 2, 3",
             field_theta_degrees=FIELD_THETA_DEGREES,
             J_zz_ev=args.j_zz_ev,
             J_pm_over_J_zz=args.j_pm,
             J_pmpm_over_J_zz=args.j_pmpm,
+            field_energy_definition="mu_B |B|",
+            g_z=args.g_z,
+            g_perp=args.g_perp,
+            delta1_per_mev=args.delta1_per_mev,
+            delta2_per_mev=args.delta2_per_mev,
             lorentzian_eta_mev=args.eta_mev,
             tto_cubic_lattice_angstrom=args.lattice_constant,
             dssf_nk=args.dssf_nk,
@@ -347,7 +364,8 @@ def compute_and_plot(args):
     dispersion_bounds_mev = np.empty(scan_shape + (2,), dtype=float)
     max_imaginary_frequency_ratio = np.zeros(scan_shape, dtype=float)
     state_data = {
-        "h_z_over_J_zz": np.empty(scan_shape + (4,)),
+        "bare_field_local_over_J_zz": np.empty(scan_shape + (4, 3)),
+        "effective_field_local_over_J_zz": np.empty(scan_shape + (4, 3)),
         "initial_spins_local": np.empty(scan_shape + (4, 3)),
         "ordered_spins_local": np.empty(scan_shape + (4, 3)),
         "initial_classical_energy": np.empty(scan_shape),
@@ -361,7 +379,7 @@ def compute_and_plot(args):
             condition = (phi_index, field_index)
             print(
                 f"Preparing dispersion for phi={field_phi_degrees:g} deg, "
-                f"h/Jzz={field_ratio:g}", flush=True,
+                f"mu_B|B|/Jzz={field_ratio:g}", flush=True,
             )
             h_z, initial_spins, relaxed = prepare_ordered_state(
                 args, field_ratio, field_phi_degrees
@@ -370,6 +388,7 @@ def compute_and_plot(args):
                 q_reduced, relaxed["unit_vectors_local"], h_z, args.j_pm,
                 j_pmpm_ratio=args.j_pmpm, j_zz_ev=args.j_zz_ev,
                 spin_length=args.spin_length, regularization=args.regularization,
+                mode_index=one_magnon_mode_index(args.component),
             )
             states[condition] = (h_z, relaxed)
             dispersion_bounds_mev[condition] = 1e3 * np.asarray([
@@ -378,7 +397,10 @@ def compute_and_plot(args):
             max_imaginary_frequency_ratio[condition] = (
                 bounds["max_imaginary_frequency_ratio"]
             )
-            state_data["h_z_over_J_zz"][condition] = h_z
+            state_data["bare_field_local_over_J_zz"][condition] = (
+                relaxed["bare_field_local_over_J_zz"]
+            )
+            state_data["effective_field_local_over_J_zz"][condition] = h_z
             state_data["initial_spins_local"][condition] = initial_spins
             state_data["ordered_spins_local"][condition] = relaxed["spins_local"]
             state_data["initial_classical_energy"][condition] = relaxed["initial_energy"]
@@ -408,7 +430,7 @@ def compute_and_plot(args):
             h_z, relaxed = states[condition]
             print(
                 f"Evaluating DSSF for phi={field_phi_degrees:g} deg, "
-                f"h/Jzz={field_ratio:g}", flush=True,
+                f"mu_B|B|/Jzz={field_ratio:g}", flush=True,
             )
             result = spin_wave_structure_factor_spectrum(
                 q_reduced, 1e-3 * omega_mev, relaxed["unit_vectors_local"],
@@ -457,6 +479,10 @@ def build_parser():
     parser.add_argument("--field-phis", type=float, nargs=2, default=(0.1, 30.1))
     parser.add_argument("--j-pm", type=float, default=0.205)
     parser.add_argument("--j-pmpm", type=float, default=0.0)
+    parser.add_argument("--g-z", type=float, default=10.0)
+    parser.add_argument("--g-perp", type=float, default=0.0)
+    parser.add_argument("--delta1-per-mev", type=float, default=1.0 / 1.4)
+    parser.add_argument("--delta2-per-mev", type=float, default=1.0 / 1.4)
     parser.add_argument("--j-zz-ev", type=float, default=0.00019)
     parser.add_argument("--component", choices=COMPONENTS, default="one_magnon")
     parser.add_argument("--vmax-percentile", type=float, default=99.0)

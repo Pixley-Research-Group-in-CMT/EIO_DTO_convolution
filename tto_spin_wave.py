@@ -1,9 +1,13 @@
 """Linear spin-wave DSSF from Sec. 4.2 of ``papers/gMFT.pdf``.
 
-For every field direction, a Zeeman-minimizing local-Ising configuration seeds
-a multistart minimization of the physical classical spin Hamiltonian.  The BdG
-expansion and Eqs. (99)--(100) are evaluated about that stable state.  The
-bond-dependent J_pmpm tensor follows the gamma convention in Eqs. (1)--(2).
+For every field direction, a configuration aligned with the complete local
+field in Eq. (1) of ``papers/EIO_TTO.pdf`` seeds a multistart minimization of
+the physical classical spin Hamiltonian.  The input field coordinate is the
+bare Zeeman energy ``mu_B |B| / J_zz``; the g factors and the quadratic
+``delta_1``/``delta_2`` couplings are applied only after projection onto the
+local axes.  The BdG expansion and Eqs. (99)--(100) are evaluated about that
+stable state.  The bond-dependent J_pmpm tensor follows the positive
+``+J_pmpm (gamma S+ S+ + gamma* S- S-)`` convention in Eqs. (1)--(3).
 """
 import numpy as np
 from scipy.optimize import least_squares, minimize
@@ -37,6 +41,22 @@ GAMMA = np.asarray([
 FIELD_C1 = np.asarray([-1.0, -1.0, 2.0]) / np.sqrt(6.0)
 FIELD_C2 = np.asarray([1.0, -1.0, 0.0]) / np.sqrt(2.0)
 FIELD_C3 = np.asarray([1.0, 1.0, 1.0]) / np.sqrt(3.0)
+ONE_MAGNON_MODE_COMPONENTS = tuple(
+    f"one_magnon_{mode}" for mode in range(1, 5)
+)
+SPIN_WAVE_COMPONENTS = (
+    "one_magnon",
+    *ONE_MAGNON_MODE_COMPONENTS,
+    "two_magnon",
+    "total",
+)
+
+
+def one_magnon_mode_index(component):
+    """Return the zero-based energy-ordered band selected by a component."""
+    if component in ONE_MAGNON_MODE_COMPONENTS:
+        return ONE_MAGNON_MODE_COMPONENTS.index(component)
+    return None
 
 
 def magnetic_field_direction(theta_degrees=90.0, phi_degrees=0.0):
@@ -54,27 +74,112 @@ def magnetic_field_direction(theta_degrees=90.0, phi_degrees=0.0):
     return direction / norm
 
 
-def local_zeeman_components(h_over_j_zz, theta_degrees=90.0, phi_degrees=0.0):
-    """Project a dimensionless global field onto the four local Ising axes."""
-    h_over_j_zz = float(h_over_j_zz)
-    if not np.isfinite(h_over_j_zz) or h_over_j_zz < 0.0:
-        raise ValueError("h/J_zz must be finite and nonnegative")
+def local_magnetic_field(
+    mu_b_b_over_j_zz,
+    theta_degrees=90.0,
+    phi_degrees=0.0,
+):
+    """Return the bare local components ``mu_B B . (x,y,z)_mu / J_zz``."""
+    mu_b_b_over_j_zz = float(mu_b_b_over_j_zz)
+    if not np.isfinite(mu_b_b_over_j_zz) or mu_b_b_over_j_zz < 0.0:
+        raise ValueError("mu_B |B| / J_zz must be finite and nonnegative")
     direction = magnetic_field_direction(theta_degrees, phi_degrees)
-    return h_over_j_zz * (LOCAL_Z @ direction)
+    projections = np.stack((
+        LOCAL_X @ direction,
+        LOCAL_Y @ direction,
+        LOCAL_Z @ direction,
+    ), axis=1)
+    return mu_b_b_over_j_zz * projections
+
+
+def local_zeeman_components(
+    mu_b_b_over_j_zz,
+    theta_degrees=90.0,
+    phi_degrees=0.0,
+):
+    """Return the bare local-z components retained for legacy diagnostics."""
+    return local_magnetic_field(
+        mu_b_b_over_j_zz,
+        theta_degrees=theta_degrees,
+        phi_degrees=phi_degrees,
+    )[:, 2]
+
+
+def local_zeeman_field(
+    mu_b_b_over_j_zz,
+    theta_degrees=90.0,
+    phi_degrees=0.0,
+    g_z=10.0,
+    g_perp=0.0,
+    delta1_j_zz=0.0,
+    delta2_j_zz=0.0,
+):
+    """Return the effective local field ``b_mu/J_zz`` in Eq. (1).
+
+    The input is ``mu_B |B| / J_zz``.  ``delta1_j_zz`` and
+    ``delta2_j_zz`` mean ``delta_1 J_zz`` and ``delta_2 J_zz`` and are
+    dimensionless.  If the deltas are specified in inverse meV, callers must
+    multiply them by ``J_zz`` in meV.  The returned columns are the
+    coefficients of ``-(S_x, S_y, S_z)``.
+    """
+    coefficients = np.asarray(
+        (float(g_z), float(g_perp), float(delta1_j_zz), float(delta2_j_zz))
+    )
+    if not np.all(np.isfinite(coefficients)):
+        raise ValueError("g factors and delta_i J_zz must be finite")
+    if g_z < 0.0 or g_perp < 0.0:
+        raise ValueError("g_z and g_perp must be nonnegative")
+    bare = local_magnetic_field(
+        mu_b_b_over_j_zz,
+        theta_degrees=theta_degrees,
+        phi_degrees=phi_degrees,
+    )
+    h_x, h_y, h_z = bare.T
+    return np.column_stack((
+        g_perp * h_x
+        + delta1_j_zz * h_x * h_z
+        + delta2_j_zz * (h_y ** 2 - h_x ** 2),
+        g_perp * h_y
+        + delta1_j_zz * h_y * h_z
+        + 2.0 * delta2_j_zz * h_x * h_y,
+        g_z * h_z,
+    ))
+
+
+def _as_local_field(field):
+    """Coerce a legacy Ising field or a full local field to shape ``(4, 3)``."""
+    field = np.asarray(field, dtype=float)
+    if field.shape == (4,):
+        local_field = np.zeros((4, 3), dtype=float)
+        local_field[:, 2] = field
+    elif field.shape == (4, 3):
+        local_field = field
+    else:
+        raise ValueError(
+            "local field must have shape (4,) for Ising-only coupling or "
+            "(4, 3) for (x, y, z) coupling"
+        )
+    if not np.all(np.isfinite(local_field)):
+        raise ValueError("local field components must be finite")
+    return local_field
 
 
 def zeeman_minimizing_spins(h_z, spin_length=0.5, zero_tolerance=1e-12):
-    """Return local-Ising spins minimizing ``-sum_mu h_z_mu S_z_mu``.
+    """Return independent spins minimizing the complete local Zeeman term.
 
-    A zero local field leaves that sublattice unconstrained by the Zeeman
-    energy; ``+z`` is chosen as a deterministic representative.
+    A legacy four-component input is interpreted as an Ising-only field.  A
+    ``(4, 3)`` input includes the transverse coupling in Eq. (1).  A zero
+    local field leaves that sublattice unconstrained; ``+z`` is selected as a
+    deterministic representative.
     """
-    h_z = np.asarray(h_z, dtype=float)
-    if h_z.shape != (4,) or not np.all(np.isfinite(h_z)):
-        raise ValueError("h_z must contain four finite local field components")
-    orientation = np.where(h_z < -abs(float(zero_tolerance)), -1.0, 1.0)
-    spins = np.zeros((4, 3), dtype=float)
-    spins[:, 2] = float(spin_length) * orientation
+    local_field = _as_local_field(h_z)
+    norms = np.linalg.norm(local_field, axis=1)
+    spins = np.zeros_like(local_field)
+    nonzero = norms > abs(float(zero_tolerance))
+    spins[nonzero] = (
+        float(spin_length) * local_field[nonzero] / norms[nonzero, None]
+    )
+    spins[~nonzero, 2] = float(spin_length)
     return spins
 
 
@@ -116,10 +221,12 @@ def _vector_derivatives(parameters):
 
 
 def exchange_matrix(j_pm_ratio, j_pmpm_ratio=0.0, gamma=1.0):
-    """Local Cartesian bond exchange in J_zz units for Eqs. (1)--(2).
+    """Local Cartesian bond exchange in units of ``J_zz``.
 
-    ``gamma`` is the complex phase for the ordered sublattice pair.  The
-    returned real tensor acts on ``(S_x, S_y, S_z)`` in the two local frames.
+    ``j_pmpm_ratio`` uses the note's positive
+    ``+J_pmpm (gamma S+ S+ + gamma* S- S-)`` convention.  ``gamma`` is the
+    bond phase in Eq. (2).  The returned real tensor acts on
+    ``(S_x, S_y, S_z)`` in the two local frames.
     """
     gamma = complex(gamma)
     transverse = -2.0 * j_pm_ratio
@@ -142,6 +249,7 @@ def classical_energy_and_gradient(
 ):
     """Classical four-sublattice energy and analytic angular gradient."""
     unit = _unit_vectors(parameters)
+    local_field = _as_local_field(h_z)
     energy = 0.0
     vector_gradient = np.zeros_like(unit)
     for mu in range(4):
@@ -155,8 +263,8 @@ def classical_energy_and_gradient(
             vector_gradient[nu] += (
                 2.0 * spin_length ** 2 * exchange.T @ unit[mu]
             )
-    energy -= spin_length * np.dot(h_z, unit[:, 2])
-    vector_gradient[:, 2] -= spin_length * h_z
+    energy -= spin_length * np.einsum("ma,ma->", local_field, unit)
+    vector_gradient -= spin_length * local_field
     dtheta, dphi = _vector_derivatives(parameters)
     gradient = np.concatenate((
         np.einsum("mi,mi->m", vector_gradient, dtheta),
@@ -176,6 +284,7 @@ def classical_tangent_hessian(
     """Return the constrained classical Hessian and local tangent bases."""
     unit = np.asarray(unit_vectors_local, dtype=float)
     unit = unit / np.linalg.norm(unit, axis=1)[:, None]
+    local_field = _as_local_field(h_z)
     bases = np.empty((4, 3, 2), dtype=float)
     vector_gradient = np.zeros_like(unit)
     hessian = np.zeros((8, 8), dtype=float)
@@ -199,7 +308,7 @@ def classical_tangent_hessian(
             hessian[2 * mu:2 * mu + 2, 2 * nu:2 * nu + 2] = block
             hessian[2 * nu:2 * nu + 2, 2 * mu:2 * mu + 2] = block.T
 
-    vector_gradient[:, 2] -= spin_length * np.asarray(h_z)
+    vector_gradient -= spin_length * local_field
     for mu in range(4):
         curvature = -np.dot(vector_gradient[mu], unit[mu])
         hessian[2 * mu:2 * mu + 2, 2 * mu:2 * mu + 2] = (
@@ -406,6 +515,7 @@ def spin_wave_matrix(
 ):
     """Conventional bosonic BdG matrix equivalent to Eqs. (93)--(96)."""
     rotations = quantization_rotations(unit_vectors_local)
+    local_field = _as_local_field(h_z)
     local_exchange = np.empty((4, 4, 3, 3), dtype=float)
     for mu in range(4):
         for nu in range(4):
@@ -439,8 +549,12 @@ def spin_wave_matrix(
                 exchange_zero_zz[mu, nu] = 2.0 * rotated_exchange[mu, nu, 2, 2]
     diagonal = np.diag_indices(4)
     a_block[diagonal] -= spin_length * np.sum(exchange_zero_zz, axis=1)
-    # The Zeeman term omitted from Eq. (95) contributes h_parallel n_mu.
-    a_block[diagonal] += np.asarray(h_z) * rotations[:, 2, 2]
+    # The full Eq. (1) field term contributes the component of the effective
+    # field parallel to the relaxed ordered spin, b_mu dot e_tilde_z, to the
+    # boson number term.  Linear transverse terms vanish at stationarity.
+    a_block[diagonal] += np.einsum(
+        "ma,ma->m", local_field, rotations[:, 2, :]
+    )
     a_block[diagonal] += regularization
     matrix = np.block([
         [a_block, b_block],
@@ -514,6 +628,9 @@ def spin_wave_structure_factor(
     interface = np.asarray(interface_sublattices, dtype=int)
 
     one_magnon = np.empty((len(interface), len(q_flat)), dtype=float)
+    one_magnon_modes = np.empty(
+        (4, len(interface), len(q_flat)), dtype=float
+    )
     max_imaginary = 0.0
     for iq, (q_value, energy) in enumerate(zip(q_flat, transfer)):
         frequencies, vectors, imaginary = magnon_modes(
@@ -524,11 +641,14 @@ def spin_wave_structure_factor(
         max_imaginary = max(max_imaginary, imaginary)
         frequencies_ev = j_zz_ev * frequencies
         particle_weights = np.abs(vectors[:4]) ** 2
-        one_magnon[:, iq] = 2.0 * spin_length * np.sum(
-            particle_weights[interface]
-            * lorentzian_delta(energy - frequencies_ev, eta_ev)[None, :],
-            axis=1,
+        mode_intensity = (
+            2.0
+            * spin_length
+            * particle_weights[interface]
+            * lorentzian_delta(energy - frequencies_ev, eta_ev)[None, :]
         )
+        one_magnon_modes[:, :, iq] = mode_intensity.T
+        one_magnon[:, iq] = np.sum(mode_intensity, axis=1)
 
     # Midpoint quadrature avoids the isolated Goldstone point at Gamma.  Its
     # thermodynamic integration weight is zero, while including it on a finite
@@ -570,21 +690,18 @@ def spin_wave_structure_factor(
                 np.sum(pair_weight * delta, axis=(1, 2))
             )
 
-    bragg = np.zeros_like(one_magnon)
-    reciprocal_zero = np.linalg.norm(q_flat - np.round(q_flat), axis=1) < 1e-10
-    bragg[:, reciprocal_zero] = (
-        nk ** 3 * spin_length ** 2
-        * lorentzian_delta(transfer[reciprocal_zero], eta_ev)[None, :]
-    )
     output_shape = (len(interface),) + shape
     one_magnon = one_magnon.reshape(output_shape)
+    one_magnon_mode_result = {
+        component: one_magnon_modes[mode].reshape(output_shape)
+        for mode, component in enumerate(ONE_MAGNON_MODE_COMPONENTS)
+    }
     two_magnon = two_magnon.reshape(output_shape)
-    bragg = bragg.reshape(output_shape)
     return {
         "one_magnon": one_magnon,
+        **one_magnon_mode_result,
         "two_magnon": two_magnon,
-        "bragg": bragg,
-        "total": one_magnon + two_magnon + bragg,
+        "total": one_magnon + two_magnon,
         "max_imaginary_frequency_ratio": max_imaginary,
     }
 
@@ -599,6 +716,7 @@ def magnon_dispersion_bounds(
     j_zz_ev,
     spin_length=0.5,
     regularization=1e-8,
+    mode_index=None,
 ):
     """Return the minimum and maximum magnon energies on a momentum grid."""
     k_reduced = np.asarray(k_reduced, dtype=float)
@@ -611,6 +729,14 @@ def magnon_dispersion_bounds(
         raise ValueError("k_reduced must contain finite three-component momenta")
     if not np.isfinite(j_zz_ev) or j_zz_ev <= 0.0:
         raise ValueError("j_zz_ev must be finite and positive")
+    if mode_index is not None:
+        if (
+            isinstance(mode_index, (bool, np.bool_))
+            or int(mode_index) != mode_index
+            or not 0 <= int(mode_index) < 4
+        ):
+            raise ValueError("mode_index must be None or an integer from 0 to 3")
+        mode_index = int(mode_index)
 
     minimum = np.inf
     maximum = -np.inf
@@ -626,6 +752,8 @@ def magnon_dispersion_bounds(
             regularization=regularization,
         )
         frequencies_ev = float(j_zz_ev) * frequencies
+        if mode_index is not None:
+            frequencies_ev = frequencies_ev[mode_index:mode_index + 1]
         minimum = min(minimum, float(np.min(frequencies_ev)))
         maximum = max(maximum, float(np.max(frequencies_ev)))
         max_imaginary = max(max_imaginary, imaginary)
@@ -659,8 +787,7 @@ def spin_wave_structure_factor_spectrum(
     once per momentum and reused for every requested energy.  The returned
     intensity axes are ``(sublattice, omega) + q_reduced.shape[:-1]``.
     """
-    components = ("one_magnon", "two_magnon", "bragg", "total")
-    if component not in components:
+    if component not in SPIN_WAVE_COMPONENTS:
         raise ValueError(f"Unknown spin-wave DSSF component: {component}")
     q_reduced = np.asarray(q_reduced, dtype=float)
     omega_ev = np.asarray(omega_ev, dtype=float)
@@ -697,7 +824,8 @@ def spin_wave_structure_factor_spectrum(
     max_imaginary = 0.0
     pieces = []
 
-    if component in ("one_magnon", "total"):
+    selected_mode = one_magnon_mode_index(component)
+    if component in ("one_magnon", "total") or selected_mode is not None:
         one_magnon = np.empty(output_shape, dtype=float)
         for iq, q_value in enumerate(q_flat):
             frequencies, vectors, imaginary = magnon_modes(
@@ -715,10 +843,18 @@ def spin_wave_structure_factor_spectrum(
             delta = lorentzian_delta(
                 omega_ev[:, None] - frequencies_ev[None, :], eta_ev
             )
-            one_magnon[:, :, iq] = 2.0 * spin_length * np.einsum(
-                "mb,wb->mw", particle_weights[interface], delta,
-                optimize=True,
-            )
+            if selected_mode is None:
+                one_magnon[:, :, iq] = 2.0 * spin_length * np.einsum(
+                    "mb,wb->mw", particle_weights[interface], delta,
+                    optimize=True,
+                )
+            else:
+                one_magnon[:, :, iq] = (
+                    2.0
+                    * spin_length
+                    * particle_weights[interface, selected_mode, None]
+                    * delta[None, :, selected_mode]
+                )
         pieces.append(one_magnon)
 
     if component in ("two_magnon", "total"):
@@ -771,20 +907,6 @@ def spin_wave_structure_factor_spectrum(
                     ) / len(k_grid)
         pieces.append(two_magnon)
 
-    if component in ("bragg", "total"):
-        bragg = np.zeros(output_shape, dtype=float)
-        reciprocal_zero = (
-            np.linalg.norm(q_flat - np.round(q_flat), axis=1) < 1e-10
-        )
-        profile = (
-            int(nk) ** 3
-            * spin_length ** 2
-            * lorentzian_delta(omega_ev, eta_ev)
-        )
-        for iq in np.flatnonzero(reciprocal_zero):
-            bragg[:, :, iq] = profile[None, :]
-        pieces.append(bragg)
-
     intensity = pieces[0].copy()
     for values in pieces[1:]:
         intensity += values
@@ -812,7 +934,8 @@ def spin_wave_static_structure_factor(
 
     The broadened delta functions used by :func:`spin_wave_structure_factor`
     are integrated analytically.  This gives an energy-grid-independent static
-    response and retains the one-magnon, two-magnon, and Bragg pieces.
+    response and retains the one- and two-magnon pieces. The elastic Bragg
+    contribution is excluded from every spin-wave structure-factor workflow.
     """
     q_reduced = np.asarray(q_reduced, dtype=float)
     if q_reduced.ndim < 1 or q_reduced.shape[-1] != 3:
@@ -828,6 +951,9 @@ def spin_wave_static_structure_factor(
         raise ValueError("sublattices must contain indices between 0 and 3")
 
     one_magnon = np.empty((len(selected_sublattices), len(q_flat)), dtype=float)
+    one_magnon_modes = np.empty(
+        (4, len(selected_sublattices), len(q_flat)), dtype=float
+    )
     max_imaginary = 0.0
     for iq, q_value in enumerate(q_flat):
         _, vectors, imaginary = magnon_modes(
@@ -837,10 +963,9 @@ def spin_wave_static_structure_factor(
         )
         max_imaginary = max(max_imaginary, imaginary)
         particle_weights = np.abs(vectors[:4]) ** 2
-        one_magnon[:, iq] = (
-            2.0 * spin_length
-            * np.sum(particle_weights[selected_sublattices], axis=1)
-        )
+        mode_intensity = 2.0 * spin_length * particle_weights[selected_sublattices]
+        one_magnon_modes[:, :, iq] = mode_intensity.T
+        one_magnon[:, iq] = np.sum(mode_intensity, axis=1)
 
     k_grid = shifted_k_grid(nk)
     grid_weights = np.empty((len(k_grid), 4, 4), dtype=float)
@@ -870,18 +995,17 @@ def spin_wave_static_structure_factor(
                 np.sum(pair_weight, axis=(1, 2))
             )
 
-    bragg = np.zeros_like(one_magnon)
-    reciprocal_zero = np.linalg.norm(q_flat - np.round(q_flat), axis=1) < 1e-10
-    bragg[:, reciprocal_zero] = nk ** 3 * spin_length ** 2
-
     output_shape = (len(selected_sublattices),) + shape
     one_magnon = one_magnon.reshape(output_shape)
+    one_magnon_mode_result = {
+        component: one_magnon_modes[mode].reshape(output_shape)
+        for mode, component in enumerate(ONE_MAGNON_MODE_COMPONENTS)
+    }
     two_magnon = two_magnon.reshape(output_shape)
-    bragg = bragg.reshape(output_shape)
     return {
         "one_magnon": one_magnon,
+        **one_magnon_mode_result,
         "two_magnon": two_magnon,
-        "bragg": bragg,
-        "total": one_magnon + two_magnon + bragg,
+        "total": one_magnon + two_magnon,
         "max_imaginary_frequency_ratio": max_imaginary,
     }

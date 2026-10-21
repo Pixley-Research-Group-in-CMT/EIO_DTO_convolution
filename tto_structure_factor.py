@@ -92,7 +92,7 @@ def eio_to_tto_reduced_momentum(q_slab, cubic_lattice_angstrom):
     return np.einsum("ij,...j->...i", np.linalg.inv(reciprocal), q_cubic)
 
 
-def load_gmft_scan(folder, j_pm_ratio, field_ratios=None):
+def load_gmft_scan(folder, j_pm_ratio, field_ratios=None, allow_missing=False):
     """Load one J_pm slice, taking each phi only from its matching directory."""
     folder = Path(folder)
     frames = []
@@ -107,7 +107,7 @@ def load_gmft_scan(folder, j_pm_ratio, field_ratios=None):
         frame = frame[
             np.isclose(frame["phi_degrees"], directory_phi)
             & np.isclose(frame["J_pm_over_J_zz"], j_pm_ratio)
-            & frame["status"].fillna("").eq("ok")
+            & (frame["status"].fillna("").eq("ok") | allow_missing)
         ]
         if field_ratios is not None:
             requested = np.asarray(field_ratios, dtype=float)
@@ -127,7 +127,7 @@ def load_gmft_scan(folder, j_pm_ratio, field_ratios=None):
     if result.duplicated(keys).any():
         duplicate = result.loc[result.duplicated(keys, keep=False), keys].iloc[0]
         raise ValueError(f"Duplicate gMFT condition: {duplicate.to_dict()}")
-    if field_ratios is not None:
+    if field_ratios is not None and not allow_missing:
         found = result["h_over_J_zz"].unique()
         missing = [value for value in field_ratios if not np.any(np.isclose(found, value))]
         if missing:

@@ -28,7 +28,7 @@ def q_perp_reduced_offsets(n_q_perp):
     In the FCC reduced basis used by the TTO solvers, a reciprocal translation
     normal to the (111) interface is ``(1, 1, 1)``.  The returned coefficients
     therefore parameterize shifts ``t * (1, 1, 1)`` over one periodic interval.
-    Including ``t=0`` retains the projected Bragg contribution on a finite grid.
+    Including ``t=0`` keeps the slice among the finite-grid samples.
     """
     _, count = validate_q_perp_sampling("slice", n_q_perp)
     return (np.arange(count, dtype=float) - count // 2) / count

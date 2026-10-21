@@ -9,7 +9,9 @@ import numpy as np
 from config import TTO_CUBIC_LATTICE_ANGSTROM
 
 from tto_spin_wave import (
-    local_zeeman_components,
+    SPIN_WAVE_COMPONENTS,
+    local_magnetic_field,
+    local_zeeman_field,
     relax_ordered_state,
     spin_wave_static_structure_factor,
     spin_wave_structure_factor,
@@ -26,7 +28,7 @@ from tto_surface_projection import (
 from tto_structure_factor import FCC_PRIMITIVES, eio_to_tto_reduced_momentum
 
 
-COMPONENTS = ("one_magnon", "two_magnon", "bragg", "total")
+COMPONENTS = SPIN_WAVE_COMPONENTS
 SUBLATTICES = (1, 2, 3)
 FIELD_RATIOS = np.asarray((0.25, 0.45, 1.5))
 FIELD_PHIS_DEGREES = np.asarray((0.1, 30.1))
@@ -88,22 +90,35 @@ def kagome_bz_grid(n_q, lattice_constant_angstrom):
 
 def prepare_ordered_state(args, field_ratio, field_phi_degrees):
     """Relax the four-sublattice classical state for one fixed field."""
-    h_z = local_zeeman_components(
+    bare_local = local_magnetic_field(
         field_ratio,
         theta_degrees=FIELD_THETA_DEGREES,
         phi_degrees=field_phi_degrees,
     )
-    initial_spins = zeeman_minimizing_spins(h_z, spin_length=args.spin_length)
+    j_zz_mev = 1e3 * args.j_zz_ev
+    h_local = local_zeeman_field(
+        field_ratio,
+        theta_degrees=FIELD_THETA_DEGREES,
+        phi_degrees=field_phi_degrees,
+        g_z=args.g_z,
+        g_perp=args.g_perp,
+        delta1_j_zz=args.delta1_per_mev * j_zz_mev,
+        delta2_j_zz=args.delta2_per_mev * j_zz_mev,
+    )
+    initial_spins = zeeman_minimizing_spins(
+        h_local, spin_length=args.spin_length
+    )
     relaxed = relax_ordered_state(
         initial_spins,
-        h_z,
+        h_local,
         args.j_pm,
         j_pmpm_ratio=args.j_pmpm,
         spin_length=args.spin_length,
         random_starts=args.random_starts,
         stability_tilt=args.stability_tilt,
     )
-    return h_z, initial_spins, relaxed
+    relaxed["bare_field_local_over_J_zz"] = bare_local
+    return h_local, initial_spins, relaxed
 
 
 def shared_norm(values, percentile):
@@ -173,7 +188,7 @@ def plot_field_grid(
                 axis.set_xlabel(r"$q_{[\bar{1}01]}$ ($\mathrm{\AA}^{-1}$)")
             if sublattice_index == 0:
                 axis.set_ylabel(
-                    rf"$h/J_{{zz}}={field_ratio:g}$" + "\n"
+                    rf"$\mu_B|B|/J_{{zz}}={field_ratio:g}$" + "\n"
                     + r"$q_{[1\bar{2}1]}$ ($\mathrm{\AA}^{-1}$)"
                 )
 
@@ -189,6 +204,9 @@ def plot_field_grid(
         rf"$J_{{zz}}={1e3 * args.j_zz_ev:g}$ meV, "
         rf"$J_{{\pm}}/J_{{zz}}={args.j_pm:g}$, "
         rf"$J_{{\pm\pm}}/J_{{zz}}={args.j_pmpm:g}$, "
+        rf"$g_z={args.g_z:g}$, $g_\perp={args.g_perp:g}$, "
+        rf"$\delta_1={args.delta1_per_mev:g}$ meV$^{{-1}}$, "
+        rf"$\delta_2={args.delta2_per_mev:g}$ meV$^{{-1}}$, "
         + projection_title(args)
     )
     figure.suptitle(observable + "\n" + parameters, fontsize=10)
@@ -243,7 +261,7 @@ def plot_sublattice_sum(
         axis.set_ylim(q_edges[0], q_edges[-1])
         axis.set_xticks(ticks)
         axis.set_yticks(ticks)
-        axis.set_title(rf"$h/J_{{zz}}={field_ratio:g}$")
+        axis.set_title(rf"$\mu_B|B|/J_{{zz}}={field_ratio:g}$")
         axis.set_xlabel(r"$q_{[\bar{1}01]}$ ($\mathrm{\AA}^{-1}$)")
     axes[0].set_ylabel(r"$q_{[1\bar{2}1]}$ ($\mathrm{\AA}^{-1}$)")
 
@@ -267,6 +285,9 @@ def plot_sublattice_sum(
         rf"$J_{{zz}}={1e3 * args.j_zz_ev:g}$ meV, "
         rf"$J_{{\pm}}/J_{{zz}}={args.j_pm:g}$, "
         rf"$J_{{\pm\pm}}/J_{{zz}}={args.j_pmpm:g}$, "
+        rf"$g_z={args.g_z:g}$, $g_\perp={args.g_perp:g}$, "
+        rf"$\delta_1={args.delta1_per_mev:g}$ meV$^{{-1}}$, "
+        rf"$\delta_2={args.delta2_per_mev:g}$ meV$^{{-1}}$, "
         + projection_title(args)
     )
     figure.suptitle(observable + "\n" + parameters, fontsize=10)
@@ -310,6 +331,7 @@ def write_hdf5(
             data=q_perp_samples_for_mode(args.q_perp_mode, args.n_q_perp),
         )
         output.create_dataset("field_phi_degrees", data=FIELD_PHIS_DEGREES)
+        output.create_dataset("mu_B_B_over_J_zz", data=FIELD_RATIOS)
         output.create_dataset("h_over_J_zz", data=FIELD_RATIOS)
         output.create_dataset("sublattice_indices", data=SUBLATTICES)
         for name, values in state_data.items():
@@ -333,14 +355,21 @@ def write_hdf5(
             ),
             first_bz="hexagonal 2D BZ perpendicular to cubic [111]",
             momentum_axes="x || [-1,0,1], y || [1,-2,1], in inverse Angstrom",
-            array_axes="field_phi, h_over_J_zz, sublattice, q_y, q_x",
-            mu_sum_axes="field_phi, h_over_J_zz, q_y, q_x",
+            array_axes=(
+                "field_phi, mu_B_B_over_J_zz, sublattice, q_y, q_x"
+            ),
+            mu_sum_axes="field_phi, mu_B_B_over_J_zz, q_y, q_x",
             mu_sum_definition="sum over sublattice indices 1, 2, 3",
             plotted_component=args.component,
             field_theta_degrees=FIELD_THETA_DEGREES,
             J_zz_ev=args.j_zz_ev,
             J_pm_over_J_zz=args.j_pm,
             J_pmpm_over_J_zz=args.j_pmpm,
+            field_energy_definition="mu_B |B|",
+            g_z=args.g_z,
+            g_perp=args.g_perp,
+            delta1_per_mev=args.delta1_per_mev,
+            delta2_per_mev=args.delta2_per_mev,
             tto_cubic_lattice_angstrom=args.lattice_constant,
             dssf_nk=args.dssf_nk,
             spin_length=args.spin_length,
@@ -412,7 +441,8 @@ def compute_and_plot(mode, args):
     }
     max_imaginary_frequency_ratio = np.empty(scan_shape)
     state_data = {
-        "h_z_over_J_zz": np.empty(scan_shape + (4,)),
+        "bare_field_local_over_J_zz": np.empty(scan_shape + (4, 3)),
+        "effective_field_local_over_J_zz": np.empty(scan_shape + (4, 3)),
         "initial_spins_local": np.empty(scan_shape + (4, 3)),
         "ordered_spins_local": np.empty(scan_shape + (4, 3)),
         "initial_classical_energy": np.empty(scan_shape),
@@ -430,10 +460,11 @@ def compute_and_plot(mode, args):
             condition = (phi_index, field_index)
             print(
                 "Relaxing ordered state for "
-                f"phi={field_phi_degrees:g} deg, h/Jzz={field_ratio:g}",
+                "phi="
+                f"{field_phi_degrees:g} deg, mu_B|B|/Jzz={field_ratio:g}",
                 flush=True,
             )
-            h_z, initial_spins, relaxed = prepare_ordered_state(
+            h_local, initial_spins, relaxed = prepare_ordered_state(
                 args, field_ratio, field_phi_degrees
             )
             print(
@@ -446,7 +477,7 @@ def compute_and_plot(mode, args):
                     q_points,
                     omega_ev,
                     relaxed["unit_vectors_local"],
-                    h_z,
+                    h_local,
                     args.j_pm,
                     j_pmpm_ratio=args.j_pmpm,
                     j_zz_ev=args.j_zz_ev,
@@ -463,7 +494,7 @@ def compute_and_plot(mode, args):
                     spin_wave_static_structure_factor,
                     q_points,
                     relaxed["unit_vectors_local"],
-                    h_z,
+                    h_local,
                     args.j_pm,
                     j_pmpm_ratio=args.j_pmpm,
                     nk=args.dssf_nk,
@@ -479,7 +510,10 @@ def compute_and_plot(mode, args):
             max_imaginary_frequency_ratio[condition] = (
                 result["max_imaginary_frequency_ratio"]
             )
-            state_data["h_z_over_J_zz"][condition] = h_z
+            state_data["bare_field_local_over_J_zz"][condition] = (
+                relaxed["bare_field_local_over_J_zz"]
+            )
+            state_data["effective_field_local_over_J_zz"][condition] = h_local
             state_data["initial_spins_local"][condition] = initial_spins
             state_data["ordered_spins_local"][condition] = relaxed["spins_local"]
             state_data["initial_classical_energy"][condition] = relaxed["initial_energy"]
@@ -519,6 +553,10 @@ def build_parser(mode, description):
     parser.add_argument("--output-root", type=Path, default=Path.cwd())
     parser.add_argument("--j-pm", type=float, default=0.205)
     parser.add_argument("--j-pmpm", type=float, default=0.0)
+    parser.add_argument("--g-z", type=float, default=10.0)
+    parser.add_argument("--g-perp", type=float, default=0.0)
+    parser.add_argument("--delta1-per-mev", type=float, default=1.0 / 1.4)
+    parser.add_argument("--delta2-per-mev", type=float, default=1.0 / 1.4)
     parser.add_argument("--j-zz-ev", type=float, default=0.00019)
     parser.add_argument("--n-q", type=int, default=101)
     parser.add_argument(
