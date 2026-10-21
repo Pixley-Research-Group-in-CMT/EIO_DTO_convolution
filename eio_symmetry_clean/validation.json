@@ -1,0 +1,10 @@
+{
+  "translations": 79,
+  "real_space_hermiticity_error_eV": 0.0,
+  "real_space_inversion_error_eV": 0.0,
+  "inversion_spectral_error_eV": 6.217248937900877e-15,
+  "all_48_cubic_spectral_error_eV": 1.688027495561073e-11,
+  "magnetic_generator_matrix_error_eV": 9.71439847759236e-12,
+  "slab_c3_spectral_error_eV": 1.2614798095000879e-11,
+  "time_reversal_relative_mismatch": 0.05228683080598887
+}

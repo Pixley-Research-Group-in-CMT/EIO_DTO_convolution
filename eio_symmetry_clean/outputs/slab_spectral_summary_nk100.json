@@ -1,0 +1,36 @@
+{
+  "nk": 100,
+  "n_momenta": 10000,
+  "n_bands": 264,
+  "gaussian_broadening_eV": 0.002,
+  "fermi_energy_eV": {
+    "without_inversion": 5.142059246119025,
+    "with_inversion": 5.141881396506003
+  },
+  "fermi_energy_shift_meV": -0.17784961302247382,
+  "near_fermi_eigenstates": {
+    "without_inversion": 2931,
+    "with_inversion": 2800
+  },
+  "surface_intensity_scale": {
+    "triangular": 0.11673416453671756,
+    "kagome": 0.4516793809015685
+  },
+  "surface_map_comparison": {
+    "triangular": {
+      "pearson_correlation": 0.9498704557361307,
+      "normalized_rms_difference": 0.028949651927226316,
+      "normalized_max_difference": 0.5910393676530038
+    },
+    "kagome": {
+      "pearson_correlation": 0.9443328784015428,
+      "normalized_rms_difference": 0.029132284930479195,
+      "normalized_max_difference": 0.3931074377374811
+    }
+  },
+  "figures": [
+    "slab_spectral_comparison_nk100.pdf",
+    "slab_spectral_without_inversion_nk100.pdf",
+    "slab_spectral_with_inversion_nk100.pdf"
+  ]
+}
