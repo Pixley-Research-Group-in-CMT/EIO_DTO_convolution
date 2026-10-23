@@ -1,0 +1,29 @@
+{
+  "source": "EIO_TTO working checkout",
+  "sha256": {
+    "01_generate_eio.py": "b9ac529478fd26c941fabbedb17d092c0d4693fa3c651215a9be8d9cea5af986",
+    "02_compute_tto_spin_wave_structure_factor.py": "969e1c2e4ef7efe840373814594942a74d9cdfef8fd4a2a2fc0cfce207941c16",
+    "03_compute_scattering.py": "550fdfd7888b91cc09aef986bd9de88103604a199c1236aca79ea7534eae4bed",
+    "04_compute_transport.py": "a635d34033b0d5d46ebb74cfe668e3e5e6c3e8487ce084cf4ec0e7263f1b5bbd",
+    "05_plot_transport.py": "43b422bcce49c3fac67e051714ac3272a1e7497c16488829ee4dd5dd47d4f6a4",
+    "swt_kernel_panels.py": "7cb7eb9dcf7e63927f660d3b5432c1003b859d614bed7a90d4238aee43fb1be9",
+    "config.py": "967510747decbc110c7aa90da956800d591f533719f4cb490fa96684e62c1464",
+    "eio_tb.py": "7ac59f1c40663c8eb31406935d96cd5e57d9d47966b9c973440185245d8f29b0",
+    "eio_model_selection.py": "5e40bd8712c1a6f82d5875f1c9a49592819e90c6271178940ffe2218f7d81e8a",
+    "swt_transport_components.py": "e495b63d353238d42b9d87b0881408ad1d2130f32d3de621cd34152fe3b894e6",
+    "tto_spin_wave.py": "6d753b011b583521f01e4396a01925db485e5ddb221e911f7b41a3ae69815026",
+    "tto_surface_projection.py": "57811361c7fc9c0e4dbdd86c18589c785d187ca0e4659dd916cfa8ba2898d164",
+    "swt_transport_job.py": "a4140d2d748acc748198c48d4e99a9a5225bf1a84394a888270ba2ebafae7bfe",
+    "plot_swt_results.py": "9709b17ead0b06575a35cd05b088936e29ae5cbee9ef032e9f911b0d834fdc36",
+    "plot_swt_high_symmetry_dssf_movie.py": "541cdef51b192b5687c7495a905ea4fe27e78872fec21dea8b52ae5cc0cf6a34",
+    "plot_swt_kernel.py": "2011c57709ff4b35f40545a974f394f02206df4921f8129a543316e73046bc48",
+    "queue_swt.sh": "d405ff05d756b2d20269f168920714b78694263346e6d5e2648fff9cad2b0d15",
+    "submit_swt.slurm": "23fadc23a81d7b10238fce137289a134d6dc30320c6e453f4ff2298fadb867f9",
+    "queue_swt_path_movie.sh": "c6fe5ad763186f935b6d91aca368dde9b1ad30e0fd958fbb148fc18ff77b9ac6",
+    "submit_swt_path_movie.slurm": "0945953f39892c17ebcd07895318909814f782db7d9ccf96c1448370118e8d33",
+    "queue_swt_kernel.sh": "d53c82164b45a239650c0d021c580c89fa4a66ed3824b7eb39a88bca05dc8678",
+    "submit_swt_kernel.slurm": "f3d89e37915e84a5242e1fb2af140c66a69d367619802360b0d50417881595fa",
+    "swt_path_movie_job.conf": "9be931fc2bb288e947c1206a2d772d4b5435da3392a92f9971fbb606c3700fe5",
+    "swt_kernel_job.conf": "009fd6e140500d17c422762d6f6234a983673adfd3fb8b703472457020a08b2e"
+  }
+}

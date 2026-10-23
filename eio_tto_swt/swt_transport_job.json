@@ -1,0 +1,40 @@
+{
+  "eio_model": "symmetrized",
+  "run_label": "transport_example",
+  "log_root": "./results/transport",
+  "plot_root": "./results/plots",
+  "fields": [
+    0.25,
+    0.45,
+    1.5
+  ],
+  "resistivity_plot_mode": "rows",
+  "resistivity_movie_fps": 2.0,
+  "show_kernel_plots": false,
+  "kernel_phi_degrees": [
+    0.0,
+    30.0
+  ],
+  "J_pm_ratio": 0.2,
+  "J_pmpm_ratio": 0.0,
+  "g_z": 10.0,
+  "g_perp": 0.0,
+  "delta1_per_mev": 0.0,
+  "delta2_per_mev": 0.0,
+  "transport_component": "total",
+  "j_zz_ev": 0.00017,
+  "eta_ev": 2e-05,
+  "theta_degrees": 90.0,
+  "phi_offset_degrees": 0.1,
+  "phi_start_degrees": 0.0,
+  "phi_stop_degrees": 180.0,
+  "n_phi": 90,
+  "reflect_negative_phi": false,
+  "nk": 8,
+  "q_perp_mode": "integrated",
+  "n_q_perp": 8,
+  "stability_tilt": 0.01,
+  "spin_length": 0.5,
+  "regularization": 1e-08,
+  "lattice_constant_angstrom": 10.154
+}
