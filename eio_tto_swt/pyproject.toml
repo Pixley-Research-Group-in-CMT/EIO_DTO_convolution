@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eio-tto-swt"
+version = "0.1.0"
+description = "Spin-wave EIO/TTO resistivity plots, DSSF path movies, and transport kernel movies"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "pandas>=1.5", "h5py>=3.8", "matplotlib>=3.7", "Pillow>=9.5"]
+
+[project.optional-dependencies]
+mp4 = ["imageio-ffmpeg>=0.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+eio_tto_swt = ["models/*/*.txt", "models/*/*.xyz"]
